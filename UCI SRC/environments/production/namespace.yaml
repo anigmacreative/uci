@@ -1,0 +1,498 @@
+# Production environment namespace and configuration
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: creative-identity-production
+  labels:
+    name: creative-identity-production
+    environment: production
+    app.kubernetes.io/name: creative-identity-platform
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: namespace
+    app.kubernetes.io/part-of: creative-identity-platform
+    app.kubernetes.io/managed-by: kubernetes
+    istio-injection: enabled
+    security.policy/level: "strict"
+  annotations:
+    environment.creative-identity/type: "production"
+    environment.creative-identity/region: "multi-region"
+    environment.creative-identity/cost-center: "revenue"
+    environment.creative-identity/data-classification: "restricted"
+    scheduler.alpha.kubernetes.io/node-selector: "environment=production"
+    security.creative-identity.platform/encryption: "required"
+
+---
+# Production environment resource quota (full production capacity)
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: production-quota
+  namespace: creative-identity-production
+spec:
+  hard:
+    # Compute resources (full production capacity for viral growth)
+    requests.cpu: "100"
+    requests.memory: "200Gi"
+    limits.cpu: "200"
+    limits.memory: "400Gi"
+    
+    # Storage (large capacity for user content and blockchain data)
+    requests.storage: "2Ti"
+    persistentvolumeclaims: "100"
+    
+    # Network
+    services: "50"
+    services.loadbalancers: "10"
+    services.nodeports: "10"
+    
+    # Objects
+    pods: "500"
+    configmaps: "100"
+    secrets: "80"
+    deployments.apps: "50"
+    statefulsets.apps: "30"
+
+---
+# Strict network policies for production
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: production-network-policy
+  namespace: creative-identity-production
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow ingress only from same namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: creative-identity-production
+  
+  # Allow monitoring from monitoring namespace (restricted ports)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+          security-level: "production"
+    ports:
+    - protocol: TCP
+      port: 3000 # Metrics port only
+    - protocol: TCP
+      port: 9090
+  
+  # Allow ingress from production load balancer only
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx-production
+    ports:
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 3001
+  
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  
+  # Allow HTTPS to external verified APIs only
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          network-policy: "external-api-allowed"
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow connection to verified blockchain networks
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443 # Polygon mainnet via HTTPS
+  
+  # Allow connection to monitoring (restricted)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+          security-level: "production"
+    ports:
+    - protocol: TCP
+      port: 9090 # Prometheus
+    - protocol: TCP
+      port: 3000 # Grafana
+
+---
+# Production environment configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: production-config
+  namespace: creative-identity-production
+  labels:
+    environment: production
+    config-type: application
+    security-level: "high"
+data:
+  NODE_ENV: "production"
+  LOG_LEVEL: "warn"
+  API_BASE_URL: "https://api.creativeidentity.platform"
+  WEBSOCKET_URL: "wss://ws.creativeidentity.platform"
+  
+  # Production security settings
+  ENABLE_DEBUG_LOGS: "false"
+  ENABLE_HOT_RELOAD: "false"
+  ENABLE_MOCK_BIOMETRIC: "false"
+  ENABLE_TEST_BLOCKCHAIN: "false"
+  SKIP_EMAIL_VERIFICATION: "false"
+  ENABLE_RATE_LIMITING: "true"
+  ENABLE_SECURITY_HEADERS: "true"
+  ENABLE_CSRF_PROTECTION: "true"
+  ENABLE_DDOS_PROTECTION: "true"
+  
+  # Production external services (mainnet)
+  IPFS_NODE_URL: "https://ipfs.creativeidentity.platform"
+  POLYGON_RPC_URL: "https://polygon-mainnet.g.alchemy.com/v2/production-key"
+  ELASTICSEARCH_URL: "https://elasticsearch.creative-identity-production.svc.cluster.local:9200"
+  
+  # Database configuration (production cluster)
+  POSTGRES_HOST: "postgres-primary.creative-identity-production.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DATABASE: "creative_identity_production"
+  POSTGRES_SSL_MODE: "require"
+  
+  REDIS_HOST: "redis-cluster.creative-identity-production.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_SSL_ENABLED: "true"
+  
+  # Monitoring configuration
+  PROMETHEUS_URL: "https://prometheus.monitoring.svc.cluster.local:9090"
+  GRAFANA_URL: "https://grafana.monitoring.svc.cluster.local:3000"
+  JAEGER_URL: "https://jaeger-query.monitoring.svc.cluster.local:16686"
+  
+  # Production feature flags (minimal experimental features)
+  FEATURE_FLAGS: |
+    {
+      "enableBetaFeatures": false,
+      "enableDebugMode": false,
+      "enableMockServices": false,
+      "enablePerformanceProfiling": false,
+      "enableExperimentalUI": false,
+      "skipRateLimiting": false,
+      "enableDetailedLogging": false,
+      "enableA11yTesting": false,
+      "enableLoadTesting": false,
+      "enableSecurityTesting": false,
+      "enableProductionOptimizations": true,
+      "enableAdvancedCaching": true,
+      "enableCDN": true
+    }
+  
+  # Performance and scaling configuration (viral growth ready)
+  MAX_CONCURRENT_REQUESTS: "10000"
+  REQUEST_TIMEOUT_MS: "15000"
+  WEBSOCKET_MAX_CONNECTIONS: "100000"
+  CACHE_TTL_SECONDS: "7200"
+  CDN_CACHE_TTL_SECONDS: "86400"
+  
+  # High-security content verification
+  C2PA_VERIFICATION_LEVEL: "maximum"
+  BIOMETRIC_CONFIDENCE_THRESHOLD: "0.99"
+  CONTENT_MODERATION_LEVEL: "maximum"
+  DEEPFAKE_DETECTION_SENSITIVITY: "high"
+  
+  # Production business metrics thresholds (viral growth ready)
+  MAX_IDENTITY_CREATIONS_PER_MINUTE: "10000"
+  MAX_CONTENT_VERIFICATIONS_PER_MINUTE: "50000"
+  MAX_PLATFORM_SYNCS_PER_MINUTE: "20000"
+  MAX_CONCURRENT_USERS: "1000000"
+  
+  # Geographic distribution
+  REGIONS: "us-west-2,us-east-1,eu-west-1,ap-southeast-1"
+  PRIMARY_REGION: "us-west-2"
+  
+  # Compliance settings
+  GDPR_COMPLIANCE_ENABLED: "true"
+  CCPA_COMPLIANCE_ENABLED: "true"
+  SOC2_LOGGING_ENABLED: "true"
+  PCI_DSS_MODE: "true"
+  
+  # Business continuity
+  DISASTER_RECOVERY_ENABLED: "true"
+  BACKUP_FREQUENCY_HOURS: "6"
+  RTO_MINUTES: "15" # Recovery Time Objective
+  RPO_MINUTES: "5"  # Recovery Point Objective
+
+---
+# Production ingress with maximum security and performance
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: creative-identity-production-ingress
+  namespace: creative-identity-production
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://creativeidentity.platform"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, PUT, POST, DELETE, PATCH, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Content-Type, Authorization, X-Requested-With, X-CSRF-Token"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Production rate limiting (viral growth ready)
+    nginx.ingress.kubernetes.io/rate-limit: "1000"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/rate-limit-burst-multiplier: "5"
+    # Advanced security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+      add_header X-Frame-Options "DENY" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' wss: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self';" always;
+      add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+    # Performance optimizations
+    nginx.ingress.kubernetes.io/proxy-buffering: "on"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "128k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "4"
+    nginx.ingress.kubernetes.io/client-body-buffer-size: "128k"
+    # SSL configuration
+    cert-manager.io/cluster-issuer: "letsencrypt-production"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.3"
+    nginx.ingress.kubernetes.io/ssl-ciphers: "ECDHE-RSA-AES128-GCM-SHA256,ECDHE-RSA-AES256-GCM-SHA384,ECDHE-RSA-AES128-SHA256,ECDHE-RSA-AES256-SHA384"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - creativeidentity.platform
+    - api.creativeidentity.platform
+    - ws.creativeidentity.platform
+    - cdn.creativeidentity.platform
+    secretName: creative-identity-production-tls
+  rules:
+  - host: creativeidentity.platform
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: creative-identity-app
+            port:
+              number: 3000
+  - host: api.creativeidentity.platform
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: creative-identity-api
+            port:
+              number: 3000
+  - host: ws.creativeidentity.platform
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: creative-identity-websocket
+            port:
+              number: 3001
+
+---
+# Production horizontal pod autoscaler (viral growth ready)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: creative-identity-app-hpa
+  namespace: creative-identity-production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: creative-identity-app
+  minReplicas: 10
+  maxReplicas: 100
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 60
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "2000"
+  - type: Object
+    object:
+      metric:
+        name: websocket_connections_active
+      target:
+        type: Value
+        value: "50000"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 200
+        periodSeconds: 30
+      - type: Pods
+        value: 10
+        periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+
+---
+# Production pod disruption budget (high availability)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: creative-identity-app-pdb
+  namespace: creative-identity-production
+spec:
+  minAvailable: 70% # Always maintain 70% of pods during disruptions
+  selector:
+    matchLabels:
+      app: creative-identity-app
+
+---
+# Production monitoring with high-frequency collection
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: creative-identity-production
+  namespace: creative-identity-production
+  labels:
+    environment: production
+    monitoring: enabled
+    priority: "high"
+spec:
+  selector:
+    matchLabels:
+      app: creative-identity
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 10s
+    scrapeTimeout: 5s
+  - port: http
+    path: /api/metrics
+    interval: 10s
+    scrapeTimeout: 5s
+  - port: health
+    path: /health/detailed
+    interval: 5s
+    scrapeTimeout: 3s
+
+---
+# Production-specific critical alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: creative-identity-production-critical-alerts
+  namespace: creative-identity-production
+spec:
+  groups:
+  - name: production-critical-alerts
+    rules:
+    - alert: ProductionServiceDown
+      expr: up{namespace="creative-identity-production"} == 0
+      for: 30s
+      labels:
+        severity: critical
+        environment: production
+        page: "true"
+      annotations:
+        summary: "CRITICAL: Production service is down"
+        description: "Production service {{ $labels.instance }} has been down for 30 seconds"
+        runbook_url: "https://docs.creativeidentity.platform/runbooks/service-down"
+    
+    - alert: ProductionHighErrorRate
+      expr: rate(http_requests_total{namespace="creative-identity-production",status=~"5.."}[2m]) > 0.01
+      for: 1m
+      labels:
+        severity: critical
+        environment: production
+        page: "true"
+      annotations:
+        summary: "CRITICAL: High error rate in production"
+        description: "Production error rate is above 1% for 1 minute"
+        runbook_url: "https://docs.creativeidentity.platform/runbooks/high-error-rate"
+    
+    - alert: ProductionViralGrowthCapacityLimit
+      expr: rate(identity_registrations_total{namespace="creative-identity-production"}[1m]) > 10000 and on() avg_over_time(kube_deployment_status_replicas_available{namespace="creative-identity-production"}[5m]) / on() avg_over_time(kube_deployment_spec_replicas{namespace="creative-identity-production"}[5m]) > 0.9
+      for: 2m
+      labels:
+        severity: warning
+        environment: production
+        viral_growth: "true"
+      annotations:
+        summary: "Viral growth approaching capacity limits"
+        description: "Identity registration rate exceeds 10k/minute and pod utilization is above 90%"
+        runbook_url: "https://docs.creativeidentity.platform/runbooks/viral-growth-scaling"
+    
+    - alert: ProductionDatabaseConnectionsCritical
+      expr: pg_stat_database_numbackends{namespace="creative-identity-production"} > 90
+      for: 1m
+      labels:
+        severity: critical
+        environment: production
+        page: "true"
+      annotations:
+        summary: "CRITICAL: Database connections critical"
+        description: "Database connections above 90 for 1 minute"
+        runbook_url: "https://docs.creativeidentity.platform/runbooks/database-connections"
+
+---
+# Production security policies
+apiVersion: v1
+kind: Pod
+metadata:
+  name: security-policy-enforcement
+  namespace: creative-identity-production
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    fsGroup: 65534
+    seLinuxOptions:
+      level: "s0:c123,c456"
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: security-enforcer
+    image: creative-identity/security-enforcer:production
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL

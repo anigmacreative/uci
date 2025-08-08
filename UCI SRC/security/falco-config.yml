@@ -1,0 +1,467 @@
+# Falco runtime security monitoring for Creative Identity Platform
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-config
+  namespace: creative-identity
+data:
+  falco.yaml: |
+    # Falco configuration for Creative Identity Platform runtime security
+    
+    # Rules configuration
+    rules_file:
+      - /etc/falco/falco_rules.yaml
+      - /etc/falco/falco_rules.local.yaml
+      - /etc/falco/creative-identity-rules.yaml
+
+    # Time format for rule output
+    time_format_iso_8601: true
+
+    # JSON output format
+    json_output: true
+    json_include_output_property: true
+    json_include_tags_property: true
+
+    # Log level
+    log_level: info
+    log_stderr: true
+
+    # Output channels
+    outputs:
+      rate: 1
+      max_burst: 1000
+
+    # Stdout output
+    stdout_output:
+      enabled: true
+
+    # File output for audit logs
+    file_output:
+      enabled: true
+      keep_alive: false
+      filename: /var/log/falco/events.log
+
+    # HTTP output to send alerts to webhook
+    http_output:
+      enabled: true
+      url: "http://falco-webhook:8080/webhook"
+      user_agent: "falco-creative-identity"
+
+    # gRPC API
+    grpc:
+      enabled: true
+      bind_address: "0.0.0.0:5060"
+      threadiness: 0
+
+    # gRPC output
+    grpc_output:
+      enabled: true
+
+    # System call event drops
+    syscall_event_drops:
+      actions:
+        - log
+        - alert
+      rate: 0.03333
+      max_burst: 10
+
+    # Engine configuration
+    engine:
+      kind: kmod
+      kmod:
+        buf_size_preset: 4
+        drop_failed_exit: false
+
+  # Creative Identity Platform specific security rules
+  creative-identity-rules.yaml: |
+    # Creative Identity Platform Runtime Security Rules
+    
+    - rule: Creative Identity Biometric Data Access
+      desc: Detect unauthorized access to biometric data storage
+      condition: >
+        open_read and
+        (fd.name contains "/biometric-data/" or 
+         fd.name contains "/models/" or
+         fd.name contains "face-recognition" or
+         fd.name contains "fingerprint") and
+        not proc.name in (creative-identity-app, creative-identity-api)
+      output: >
+        Unauthorized biometric data access detected
+        (user=%user.name command=%proc.cmdline pid=%proc.pid 
+         file=%fd.name container=%container.name image=%container.image.repository)
+      priority: CRITICAL
+      tags: [creative-identity, biometric, data-access]
+
+    - rule: Creative Identity Smart Contract Deployment
+      desc: Detect smart contract deployment activities
+      condition: >
+        spawned_process and
+        (proc.args contains "hardhat deploy" or
+         proc.args contains "truffle deploy" or
+         proc.args contains "solc" or
+         proc.cmdline contains "web3.deploy") and
+        not user.name = "deploy-user"
+      output: >
+        Smart contract deployment detected
+        (user=%user.name command=%proc.cmdline pid=%proc.pid 
+         container=%container.name image=%container.image.repository)
+      priority: WARNING
+      tags: [creative-identity, blockchain, deployment]
+
+    - rule: Creative Identity Database Credential Access
+      desc: Detect access to database credentials
+      condition: >
+        open_read and
+        (fd.name contains "database-credentials" or
+         fd.name contains ".env" and fd.name contains "DATABASE_URL" or
+         fd.name contains "pg_pass" or
+         fd.name contains "redis.conf")
+      output: >
+        Database credential access detected
+        (user=%user.name command=%proc.cmdline pid=%proc.pid 
+         file=%fd.name container=%container.name)
+      priority: HIGH
+      tags: [creative-identity, credentials, database]
+
+    - rule: Creative Identity API Rate Limiting Bypass
+      desc: Detect potential API rate limiting bypass attempts
+      condition: >
+        spawned_process and
+        (proc.args contains "curl" or proc.args contains "wget" or proc.args contains "http") and
+        proc.args contains "/api/" and
+        proc.args contains "-H" and
+        (proc.args contains "X-Forwarded-For" or proc.args contains "X-Real-IP")
+      output: >
+        Potential API rate limit bypass attempt
+        (user=%user.name command=%proc.cmdline pid=%proc.pid 
+         container=%container.name)
+      priority: MEDIUM
+      tags: [creative-identity, api, rate-limiting]
+
+    - rule: Creative Identity Cryptocurrency Wallet Access
+      desc: Detect access to cryptocurrency wallet files or keys
+      condition: >
+        open_read and
+        (fd.name contains "wallet" or
+         fd.name contains "private-key" or
+         fd.name contains ".pem" or
+         fd.name contains "keystore" or
+         fd.name endswith ".key") and
+        not proc.name in (creative-identity-api, creative-identity-worker, hardhat)
+      output: >
+        Cryptocurrency wallet/key access detected
+        (user=%user.name command=%proc.cmdline pid=%proc.pid 
+         file=%fd.name container=%container.name)
+      priority: CRITICAL
+      tags: [creative-identity, cryptocurrency, wallet]
+
+    - rule: Creative Identity Content Upload Anomaly
+      desc: Detect unusual content upload patterns
+      condition: >
+        fd.name contains "/tmp/uploads/" and
+        (fd.size > 100MB or
+         (fd.name contains ".exe" or fd.name contains ".bat" or fd.name contains ".sh"))
+      output: >
+        Suspicious content upload detected
+        (user=%user.name file=%fd.name size=%fd.size container=%container.name)
+      priority: MEDIUM
+      tags: [creative-identity, content, upload]
+
+    - rule: Creative Identity Privilege Escalation
+      desc: Detect privilege escalation attempts
+      condition: >
+        spawned_process and
+        (proc.args contains "sudo" or proc.args contains "su -" or proc.args contains "chmod +s") and
+        container.name contains "creative-identity"
+      output: >
+        Privilege escalation attempt in Creative Identity container
+        (user=%user.name command=%proc.cmdline pid=%proc.pid 
+         container=%container.name image=%container.image.repository)
+      priority: HIGH
+      tags: [creative-identity, privilege-escalation]
+
+    - rule: Creative Identity Network Anomaly
+      desc: Detect unusual network connections from Creative Identity services
+      condition: >
+        inbound_connection and
+        (fd.rip != "127.0.0.1" and fd.rip != "::1") and
+        not fd.rip in (postgres_ips, redis_ips, elasticsearch_ips) and
+        container.name contains "creative-identity"
+      output: >
+        Unusual inbound network connection to Creative Identity service
+        (connection=%fd.name pid=%proc.pid container=%container.name 
+         source_ip=%fd.rip source_port=%fd.rport)
+      priority: MEDIUM
+      tags: [creative-identity, network, anomaly]
+
+    - rule: Creative Identity File Integrity Monitoring
+      desc: Monitor critical file modifications
+      condition: >
+        modify and
+        (fd.name startswith "/app/config/" or
+         fd.name startswith "/app/contracts/" or
+         fd.name startswith "/etc/ssl/certs/" or
+         fd.name contains "package.json" or
+         fd.name contains "yarn.lock")
+      output: >
+        Critical file modification detected
+        (user=%user.name file=%fd.name pid=%proc.pid 
+         container=%container.name command=%proc.cmdline)
+      priority: WARNING
+      tags: [creative-identity, file-integrity]
+
+    - rule: Creative Identity Memory Dump Attempt
+      desc: Detect memory dump attempts on Creative Identity processes
+      condition: >
+        (proc.name = "gcore" or proc.name = "gdb" or proc.name = "strace") and
+        proc.args contains "creative-identity"
+      output: >
+        Memory dump attempt on Creative Identity process
+        (user=%user.name command=%proc.cmdline target_pid=%proc.args 
+         container=%container.name)
+      priority: HIGH
+      tags: [creative-identity, memory-dump, forensics]
+
+---
+# Falco DaemonSet deployment
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: falco
+  namespace: creative-identity
+  labels:
+    app: falco
+    component: security
+spec:
+  selector:
+    matchLabels:
+      app: falco
+  template:
+    metadata:
+      labels:
+        app: falco
+        component: security
+    spec:
+      serviceAccountName: falco
+      hostNetwork: true
+      hostPID: true
+      tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/master
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
+      containers:
+      - name: falco
+        image: falcosecurity/falco-no-driver:0.36.2
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 100m
+          limits:
+            memory: 1Gi
+            cpu: 500m
+        securityContext:
+          privileged: true
+        args:
+          - /usr/bin/falco
+          - --cri=/run/containerd/containerd.sock
+          - --cri=/run/crio/crio.sock
+          - -K=/var/run/secrets/kubernetes.io/serviceaccount/token
+          - -k=https://$(KUBERNETES_SERVICE_HOST)
+          - -pk
+        env:
+        - name: KUBERNETES_SERVICE_HOST
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: FALCO_GRPC_BIND_ADDRESS
+          value: "0.0.0.0:5060"
+        - name: FALCO_GRPC_THREADINESS
+          value: "0"
+        volumeMounts:
+        - mountPath: /var/run/docker.sock
+          name: docker-socket
+        - mountPath: /run/containerd/containerd.sock
+          name: containerd-socket
+        - mountPath: /run/crio/crio.sock
+          name: crio-socket
+        - mountPath: /dev
+          name: dev-fs
+          readOnly: true
+        - mountPath: /proc
+          name: proc-fs
+          readOnly: true
+        - mountPath: /boot
+          name: boot-fs
+          readOnly: true
+        - mountPath: /lib/modules
+          name: lib-modules
+        - mountPath: /usr
+          name: usr-fs
+          readOnly: true
+        - mountPath: /etc
+          name: etc-fs
+          readOnly: true
+        - mountPath: /etc/falco
+          name: falco-config
+        - mountPath: /var/log/falco
+          name: falco-logs
+        livenessProbe:
+          initialDelaySeconds: 60
+          timeoutSeconds: 5
+          periodSeconds: 15
+          httpGet:
+            host: localhost
+            port: 8765
+            path: /healthz
+        readinessProbe:
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          periodSeconds: 15
+          httpGet:
+            host: localhost
+            port: 8765
+            path: /healthz
+      initContainers:
+      - name: falco-driver-loader
+        image: falcosecurity/falco-driver-loader:0.36.2
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - mountPath: /root/.falco
+          name: falco-driver
+        - mountPath: /host/proc
+          name: proc-fs
+          readOnly: true
+        - mountPath: /host/boot
+          name: boot-fs
+          readOnly: true
+        - mountPath: /host/lib/modules
+          name: lib-modules
+        - mountPath: /host/usr
+          name: usr-fs
+          readOnly: true
+        - mountPath: /host/etc
+          name: etc-fs
+          readOnly: true
+      volumes:
+      - name: docker-socket
+        hostPath:
+          path: /var/run/docker.sock
+      - name: containerd-socket
+        hostPath:
+          path: /run/containerd/containerd.sock
+      - name: crio-socket
+        hostPath:
+          path: /run/crio/crio.sock
+      - name: dev-fs
+        hostPath:
+          path: /dev
+      - name: proc-fs
+        hostPath:
+          path: /proc
+      - name: boot-fs
+        hostPath:
+          path: /boot
+      - name: lib-modules
+        hostPath:
+          path: /lib/modules
+      - name: usr-fs
+        hostPath:
+          path: /usr
+      - name: etc-fs
+        hostPath:
+          path: /etc
+      - name: falco-config
+        configMap:
+          name: falco-config
+      - name: falco-driver
+        emptyDir: {}
+      - name: falco-logs
+        hostPath:
+          path: /var/log/falco
+
+---
+# ServiceAccount for Falco
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: falco
+  namespace: creative-identity
+
+---
+# ClusterRole for Falco
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: falco
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "pods", "events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "daemonsets", "replicasets", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding for Falco
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: falco
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: falco
+subjects:
+- kind: ServiceAccount
+  name: falco
+  namespace: creative-identity
+
+---
+# Falco webhook service for receiving alerts
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: falco-webhook
+  namespace: creative-identity
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: falco-webhook
+  template:
+    metadata:
+      labels:
+        app: falco-webhook
+    spec:
+      containers:
+      - name: webhook
+        image: falcosecurity/falco-exporter:0.8.3
+        ports:
+        - containerPort: 8080
+        env:
+        - name: WEBHOOK_URL
+          value: "http://alertmanager:9093/api/v1/alerts"
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 50m
+          limits:
+            memory: 256Mi
+            cpu: 200m
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: falco-webhook
+  namespace: creative-identity
+spec:
+  selector:
+    app: falco-webhook
+  ports:
+  - port: 8080
+    targetPort: 8080

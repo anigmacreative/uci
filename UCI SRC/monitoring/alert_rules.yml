@@ -1,0 +1,241 @@
+# Alert rules for Creative Identity Platform
+groups:
+  # Application Health Alerts
+  - name: application_health
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.instance }} is down"
+          description: "{{ $labels.instance }} has been down for more than 1 minute."
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on {{ $labels.instance }}"
+          description: "Error rate is above 5% for 5 minutes on {{ $labels.instance }}"
+
+      - alert: IdentityCreationFailureRate
+        expr: rate(identity_creation_failures_total[5m]) / rate(identity_creation_total[5m]) > 0.1
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High identity creation failure rate"
+          description: "Identity creation failure rate is above 10% for 3 minutes"
+
+  # Performance Alerts
+  - name: performance
+    rules:
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High response time on {{ $labels.instance }}"
+          description: "95th percentile response time is above 2 seconds for 5 minutes"
+
+      - alert: ViralGrowthPerformanceDegradation
+        expr: rate(identity_registrations_per_second[1m]) < 100 and rate(identity_registrations_per_second[5m]) > 500
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Performance degradation during viral growth"
+          description: "Registration rate has dropped significantly during high load period"
+
+      - alert: BiometricVerificationTimeout
+        expr: histogram_quantile(0.95, rate(biometric_verification_duration_seconds_bucket[5m])) > 5.0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Biometric verification taking too long"
+          description: "95th percentile biometric verification time is above 5 seconds"
+
+  # Infrastructure Alerts
+  - name: infrastructure
+    rules:
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Cached_bytes - node_memory_Buffers_bytes) / node_memory_MemTotal_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is above 85% for 5 minutes"
+
+      - alert: HighCPUUsage
+        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is above 80% for 5 minutes"
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_free_bytes / node_filesystem_size_bytes) < 0.1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Disk space is below 10% on {{ $labels.instance }}"
+
+  # Database Alerts
+  - name: database
+    rules:
+      - alert: DatabaseConnectionsHigh
+        expr: pg_stat_database_numbackends > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of database connections"
+          description: "Number of database connections is above 80"
+
+      - alert: DatabaseSlowQueries
+        expr: rate(pg_stat_statements_mean_time[5m]) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow database queries detected"
+          description: "Average query time is above 1 second"
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage high"
+          description: "Redis memory usage is above 80%"
+
+  # Security Alerts
+  - name: security
+    rules:
+      - alert: AuthenticationFailureSpike
+        expr: rate(authentication_failures_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Authentication failure spike detected"
+          description: "Authentication failure rate is above 10 per minute"
+
+      - alert: BiometricSpoofingAttempt
+        expr: rate(biometric_spoofing_detected_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Biometric spoofing attempt detected"
+          description: "Potential biometric spoofing attempt detected"
+
+      - alert: AnomalousContentUpload
+        expr: rate(content_anomaly_detected_total[5m]) > 5
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Anomalous content upload pattern"
+          description: "High rate of anomalous content uploads detected"
+
+  # Blockchain & Web3 Alerts
+  - name: blockchain
+    rules:
+      - alert: BlockchainTransactionFailureRate
+        expr: rate(blockchain_transaction_failures_total[5m]) / rate(blockchain_transactions_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High blockchain transaction failure rate"
+          description: "Blockchain transaction failure rate is above 5%"
+
+      - alert: HighGasPrices
+        expr: avg_over_time(blockchain_gas_price_gwei[10m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High gas prices detected"
+          description: "Average gas price is above 100 gwei for 10 minutes"
+
+      - alert: IPFSNodeDisconnected
+        expr: ipfs_peers_count < 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "IPFS node has few peers"
+          description: "IPFS node peer count is below 5"
+
+  # Business Metrics Alerts
+  - name: business_metrics
+    rules:
+      - alert: LowDailyActiveUsers
+        expr: daily_active_users < 10000
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Daily active users below target"
+          description: "Daily active users count is below 10,000"
+
+      - alert: CreatorOnboardingDropOff
+        expr: rate(creator_onboarding_completions_total[1h]) / rate(creator_onboarding_starts_total[1h]) < 0.7
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low creator onboarding completion rate"
+          description: "Creator onboarding completion rate is below 70%"
+
+      - alert: ContentVerificationBacklog
+        expr: content_verification_queue_size > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Content verification backlog building up"
+          description: "Content verification queue has over 1000 items"
+
+  # Viral Growth Specific Alerts
+  - name: viral_growth
+    rules:
+      - alert: ViralGrowthThresholdReached
+        expr: rate(new_user_registrations[5m]) > 1000
+        for: 1m
+        labels:
+          severity: info
+        annotations:
+          summary: "Viral growth threshold reached"
+          description: "User registration rate exceeds 1000/minute - potential viral growth event"
+
+      - alert: InviteRateLimitExceeded
+        expr: rate(invite_rate_limit_exceeded_total[5m]) > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High rate of invite limit exceeded"
+          description: "Many users hitting invite rate limits - may need scaling"
+
+      - alert: ContentShareViralitySpike
+        expr: rate(content_shares_total[5m]) > 10000
+        for: 2m
+        labels:
+          severity: info
+        annotations:
+          summary: "Content sharing virality spike"
+          description: "Content sharing rate is extremely high - potential viral content"

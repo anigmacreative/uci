@@ -1,0 +1,226 @@
+# Alertmanager configuration for Creative Identity Platform
+global:
+  smtp_smarthost: 'localhost:1025' # Using Mailhog for development
+  smtp_from: 'alerts@creativeidentity.platform'
+  smtp_auth_username: ''
+  smtp_auth_password: ''
+  smtp_require_tls: false
+
+# Templates for alert notifications
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# The directory from which notification templates are read.
+route:
+  group_by: ['alertname', 'severity', 'instance']
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 12h
+  receiver: 'web.hook'
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 10s
+      repeat_interval: 1m
+
+    # Security alerts - immediate notification
+    - match_re:
+        alertname: ^(BiometricSpoofingAttempt|AuthenticationFailureSpike|AnomalousContentUpload)$
+      receiver: 'security-team'
+      group_wait: 5s
+      repeat_interval: 30m
+
+    # Infrastructure alerts
+    - match_re:
+        alertname: ^(ServiceDown|HighMemoryUsage|HighCPUUsage|DiskSpaceLow)$
+      receiver: 'infrastructure-team'
+      group_wait: 30s
+      repeat_interval: 5m
+
+    # Business metrics alerts
+    - match_re:
+        alertname: ^(LowDailyActiveUsers|CreatorOnboardingDropOff|ContentVerificationBacklog)$
+      receiver: 'business-team'
+      group_wait: 1m
+      repeat_interval: 1h
+
+    # Viral growth alerts - special handling
+    - match_re:
+        alertname: ^(ViralGrowthThresholdReached|ContentShareViralitySpike|InviteRateLimitExceeded)$
+      receiver: 'viral-growth-team'
+      group_wait: 10s
+      repeat_interval: 5m
+
+receivers:
+  # Default webhook receiver
+  - name: 'web.hook'
+    webhook_configs:
+      - url: 'http://localhost:5001/webhook'
+        send_resolved: true
+
+  # Critical alerts - multiple channels
+  - name: 'critical-alerts'
+    email_configs:
+      - to: 'oncall@creativeidentity.platform'
+        subject: '🚨 CRITICAL: {{ .GroupLabels.alertname }} - Creative Identity Platform'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Instance: {{ .Labels.instance }}
+          Severity: {{ .Labels.severity }}
+          Started: {{ .StartsAt }}
+          {{ end }}
+        headers:
+          Priority: 'urgent'
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#critical-alerts'
+        username: 'Creative Identity Alerts'
+        color: 'danger'
+        title: '🚨 CRITICAL ALERT: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Instance:* {{ .Labels.instance }}
+          *Started:* {{ .StartsAt }}
+          {{ end }}
+        send_resolved: true
+
+    pagerduty_configs:
+      - routing_key: 'YOUR_PAGERDUTY_INTEGRATION_KEY'
+        description: '{{ .GroupLabels.alertname }} - Critical issue on Creative Identity Platform'
+
+  # Security team notifications
+  - name: 'security-team'
+    email_configs:
+      - to: 'security@creativeidentity.platform'
+        subject: '🔒 SECURITY ALERT: {{ .GroupLabels.alertname }}'
+        body: |
+          SECURITY INCIDENT DETECTED
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Instance: {{ .Labels.instance }}
+          Time: {{ .StartsAt }}
+          
+          IMMEDIATE ACTION REQUIRED
+          {{ end }}
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#security-incidents'
+        color: 'danger'
+        title: '🔒 SECURITY ALERT: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Instance:* {{ .Labels.instance }}
+          {{ end }}
+
+  # Infrastructure team
+  - name: 'infrastructure-team'
+    email_configs:
+      - to: 'infrastructure@creativeidentity.platform'
+        subject: '⚠️ INFRASTRUCTURE: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Instance: {{ .Labels.instance }}
+          Started: {{ .StartsAt }}
+          {{ end }}
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#infrastructure'
+        color: 'warning'
+        title: '⚠️ Infrastructure Alert: {{ .GroupLabels.alertname }}'
+
+  # Business team
+  - name: 'business-team'
+    email_configs:
+      - to: 'business@creativeidentity.platform'
+        subject: '📊 BUSINESS METRICS: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          Metric Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Impact: {{ .Annotations.impact }}
+          Started: {{ .StartsAt }}
+          {{ end }}
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#business-metrics'
+        color: 'good'
+        title: '📊 Business Metrics Alert: {{ .GroupLabels.alertname }}'
+
+  # Viral growth team - special rapid response
+  - name: 'viral-growth-team'
+    email_configs:
+      - to: 'growth@creativeidentity.platform, engineering@creativeidentity.platform'
+        subject: '🚀 VIRAL GROWTH EVENT: {{ .GroupLabels.alertname }}'
+        body: |
+          VIRAL GROWTH DETECTED - SCALE RESPONSE NEEDED
+          
+          {{ range .Alerts }}
+          Event: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Metrics: {{ .Labels }}
+          Time: {{ .StartsAt }}
+          
+          ACTION ITEMS:
+          1. Monitor infrastructure capacity
+          2. Activate auto-scaling policies
+          3. Prepare for increased support volume
+          4. Validate content moderation systems
+          {{ end }}
+    
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#viral-growth-response'
+        color: 'good'
+        title: '🚀 VIRAL GROWTH: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Growth Event:* {{ .Annotations.summary }}
+          *Details:* {{ .Annotations.description }}
+          *Metrics:* {{ .Labels }}
+          
+          *SCALE RESPONSE ACTIVATED* 📈
+          {{ end }}
+
+    webhook_configs:
+      - url: 'http://growth-automation:8080/webhook/viral-growth'
+        send_resolved: true
+        http_config:
+          bearer_token: 'viral-growth-automation-token'
+
+# Inhibition rules
+inhibit_rules:
+  # Inhibit any warning-level alert if there's a critical alert for the same service
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']
+
+  # Don't send infrastructure alerts during planned maintenance
+  - source_match:
+      alertname: 'MaintenanceMode'
+    target_match_re:
+      alertname: '^(ServiceDown|HighMemoryUsage|HighCPUUsage)$'
+    equal: ['instance']
+
+  # Inhibit individual service alerts if the entire system is down
+  - source_match:
+      alertname: 'SystemDown'
+    target_match_re:
+      alertname: '^(ServiceDown|DatabaseConnectionsHigh|RedisMemoryHigh)$'

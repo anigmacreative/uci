@@ -1,0 +1,304 @@
+# Development environment namespace and configuration
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: creative-identity-dev
+  labels:
+    name: creative-identity-dev
+    environment: development
+    app.kubernetes.io/name: creative-identity-platform
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: namespace
+    app.kubernetes.io/part-of: creative-identity-platform
+    app.kubernetes.io/managed-by: kubernetes
+    istio-injection: enabled # Enable service mesh for development testing
+  annotations:
+    environment.creative-identity/type: "development"
+    environment.creative-identity/region: "us-west-2"
+    environment.creative-identity/cost-center: "engineering"
+    scheduler.alpha.kubernetes.io/node-selector: "environment=development"
+
+---
+# Development environment resource quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: development-quota
+  namespace: creative-identity-dev
+spec:
+  hard:
+    # Compute resources
+    requests.cpu: "10"
+    requests.memory: "20Gi"
+    limits.cpu: "20"
+    limits.memory: "40Gi"
+    
+    # Storage
+    requests.storage: "200Gi"
+    persistentvolumeclaims: "20"
+    
+    # Network
+    services: "20"
+    services.loadbalancers: "2"
+    services.nodeports: "5"
+    
+    # Objects
+    pods: "50"
+    configmaps: "30"
+    secrets: "30"
+    deployments.apps: "20"
+    statefulsets.apps: "10"
+
+---
+# Network policies for development environment
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: development-network-policy
+  namespace: creative-identity-dev
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow ingress from same namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: creative-identity-dev
+  
+  # Allow ingress from monitoring namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 9090
+  
+  # Allow ingress from development tools
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          environment: development
+    ports:
+    - protocol: TCP
+      port: 3000 # Application port
+    - protocol: TCP
+      port: 9229 # Node.js debugging port
+  
+  egress:
+  # Allow all egress for development (less restrictive)
+  - {}
+
+---
+# Development environment configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: development-config
+  namespace: creative-identity-dev
+  labels:
+    environment: development
+    config-type: application
+data:
+  NODE_ENV: "development"
+  LOG_LEVEL: "debug"
+  API_BASE_URL: "http://creative-identity-api.creative-identity-dev.svc.cluster.local:3000"
+  WEBSOCKET_URL: "ws://creative-identity-websocket.creative-identity-dev.svc.cluster.local:3001"
+  
+  # Development-specific features
+  ENABLE_DEBUG_LOGS: "true"
+  ENABLE_HOT_RELOAD: "true"
+  ENABLE_MOCK_BIOMETRIC: "true"
+  ENABLE_TEST_BLOCKCHAIN: "true"
+  SKIP_EMAIL_VERIFICATION: "true"
+  
+  # External services (development endpoints)
+  IPFS_NODE_URL: "http://ipfs.creative-identity-dev.svc.cluster.local:5001"
+  POLYGON_RPC_URL: "http://hardhat.creative-identity-dev.svc.cluster.local:8545"
+  ELASTICSEARCH_URL: "http://elasticsearch.creative-identity-dev.svc.cluster.local:9200"
+  
+  # Database configuration
+  POSTGRES_HOST: "postgres.creative-identity-dev.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DATABASE: "creative_identity_dev"
+  
+  REDIS_HOST: "redis.creative-identity-dev.svc.cluster.local"
+  REDIS_PORT: "6379"
+  
+  # Monitoring configuration
+  PROMETHEUS_URL: "http://prometheus.monitoring.svc.cluster.local:9090"
+  GRAFANA_URL: "http://grafana.monitoring.svc.cluster.local:3000"
+  JAEGER_URL: "http://jaeger-query.monitoring.svc.cluster.local:16686"
+  
+  # Development-specific feature flags
+  FEATURE_FLAGS: |
+    {
+      "enableBetaFeatures": true,
+      "enableDebugMode": true,
+      "enableMockServices": true,
+      "enablePerformanceProfiling": true,
+      "enableExperimentalUI": true,
+      "skipRateLimiting": true,
+      "enableDetailedLogging": true
+    }
+
+---
+# Development secrets (placeholder - real secrets would be external)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: development-secrets
+  namespace: creative-identity-dev
+  labels:
+    environment: development
+    secret-type: application
+type: Opaque
+data:
+  # Base64 encoded values (these are development-only secrets)
+  JWT_SECRET: ZGV2X2p3dF9zZWNyZXRfY2hhbmdlX2luX3Byb2R1Y3Rpb24= # dev_jwt_secret_change_in_production
+  STRIPE_SECRET_KEY: c2tfdGVzdF9kZXZlbG9wbWVudF9rZXlfc2VjdXJl # sk_test_development_key_secure
+  BIOMETRIC_ENCRYPTION_KEY: ZGV2X2Jpb21ldHJpY19lbmNyeXB0aW9uX2tleV8xMjM0NTY3ODkwYWJjZGVmZ2hpams= # dev_biometric_encryption_key_1234567890abcdefghijk
+  STORY_PROTOCOL_API_KEY: c3Rvcnlwcm90b2NvbF9kZXZfYXBpX2tleV9zZWN1cmU= # storyprotocol_dev_api_key_secure
+  
+  # Database credentials
+  POSTGRES_USERNAME: cG9zdGdyZXM= # postgres
+  POSTGRES_PASSWORD: ZGV2X3Bhc3N3b3JkXzEyMw== # dev_password_123
+  
+  # Redis credentials
+  REDIS_PASSWORD: ZGV2X3JlZGlzX3Bhc3N3b3JkXzEyMw== # dev_redis_password_123
+  
+  # Blockchain development private key (test network only)
+  POLYGON_PRIVATE_KEY: MHg0ZjNlZGM5NzRjYjQ0NjY4NzY1YzFjMzM1OThhZGIwN2M5MTc3ZTNlNTg2NGFjZjcwMjc3N2FiYzEyMzQ1Njc= # 0x4f3edc974cb44668765c1c33598adb07c9177e3e5864acf702777abc1234567
+  
+  # Mock service keys for development
+  MOCK_TIKTOK_API_KEY: bW9ja190aWt0b2tfYXBpX2tleQ== # mock_tiktok_api_key
+  MOCK_INSTAGRAM_API_KEY: bW9ja19pbnN0YWdyYW1fYXBpX2tleQ== # mock_instagram_api_key
+
+---
+# Development ingress controller
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: creative-identity-dev-ingress
+  namespace: creative-identity-dev
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, PUT, POST, DELETE, PATCH, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Content-Type, Authorization"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    # Development-specific annotations
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    cert-manager.io/cluster-issuer: "letsencrypt-dev"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - dev.creativeidentity.platform
+    - api-dev.creativeidentity.platform
+    - ws-dev.creativeidentity.platform
+    secretName: creative-identity-dev-tls
+  rules:
+  - host: dev.creativeidentity.platform
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: creative-identity-app
+            port:
+              number: 3000
+  - host: api-dev.creativeidentity.platform
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: creative-identity-api
+            port:
+              number: 3000
+  - host: ws-dev.creativeidentity.platform
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: creative-identity-websocket
+            port:
+              number: 3001
+
+---
+# Development horizontal pod autoscaler (more relaxed scaling)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: creative-identity-app-hpa
+  namespace: creative-identity-dev
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: creative-identity-app
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+
+---
+# Development monitoring ServiceMonitor
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: creative-identity-dev
+  namespace: creative-identity-dev
+  labels:
+    environment: development
+    monitoring: enabled
+spec:
+  selector:
+    matchLabels:
+      app: creative-identity
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+  - port: http
+    path: /api/metrics
+    interval: 30s
+    scrapeTimeout: 10s

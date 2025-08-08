@@ -1,0 +1,474 @@
+# Compliance validation configuration for Creative Identity Platform
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: compliance-validation
+  namespace: creative-identity
+data:
+  # GDPR compliance validation rules
+  gdpr-validation.yaml: |
+    # GDPR Compliance Validation for Creative Identity Platform
+    rules:
+      - id: GDPR-001
+        title: "Data Processing Lawfulness"
+        description: "Ensure lawful basis for processing personal data"
+        category: "data-processing"
+        severity: "critical"
+        checks:
+          - type: "code-pattern"
+            pattern: "consent|legitimate_interest|contract|legal_obligation|vital_interests|public_task"
+            files: ["src/**/*.ts", "src/**/*.js"]
+            message: "Data processing must have lawful basis"
+          
+      - id: GDPR-002
+        title: "Data Subject Rights Implementation"
+        description: "Verify implementation of data subject rights"
+        category: "data-rights"
+        severity: "high"
+        checks:
+          - type: "api-endpoint"
+            endpoints: ["/api/user/data-export", "/api/user/data-deletion", "/api/user/data-rectification"]
+            message: "Data subject rights endpoints must be implemented"
+          
+      - id: GDPR-003
+        title: "Data Retention Policies"
+        description: "Check data retention period compliance"
+        category: "data-retention"
+        severity: "high"
+        checks:
+          - type: "config-value"
+            config_files: ["config/retention.json"]
+            required_fields: ["user_data_retention_days", "biometric_data_retention_days"]
+            max_values: {"user_data_retention_days": 2555, "biometric_data_retention_days": 1095} # 7 years, 3 years
+            message: "Data retention periods must comply with GDPR limits"
+
+      - id: GDPR-004
+        title: "Biometric Data Special Protection"
+        description: "Ensure special category data protection for biometrics"
+        category: "special-data"
+        severity: "critical"
+        checks:
+          - type: "encryption-check"
+            files: ["src/lib/identity/BiometricVerifier.ts"]
+            required_encryption: "AES-256-GCM"
+            message: "Biometric data must use strong encryption"
+          - type: "consent-check"
+            required_consent_type: "explicit"
+            data_type: "biometric"
+
+  # SOC 2 compliance validation
+  soc2-validation.yaml: |
+    # SOC 2 Type II Compliance Validation
+    controls:
+      - id: "CC6.1"
+        title: "Logical and Physical Access Controls"
+        description: "Access controls restrict access to authorized users"
+        tests:
+          - type: "rbac-validation"
+            kubernetes_rbac: true
+            principle: "least-privilege"
+          - type: "mfa-enforcement"
+            required_for: ["admin", "operator"]
+          - type: "access-review"
+            frequency: "quarterly"
+            
+      - id: "CC6.2"
+        title: "System Operations Monitoring"
+        description: "Monitoring detects and responds to threats"
+        tests:
+          - type: "monitoring-coverage"
+            tools: ["falco", "prometheus", "elasticsearch"]
+            coverage_percentage: 95
+          - type: "alert-response"
+            sla: "15m" # 15 minutes for critical alerts
+            
+      - id: "CC6.3"
+        title: "Data Classification and Handling"
+        description: "Data is classified and handled appropriately"
+        tests:
+          - type: "data-classification"
+            levels: ["public", "internal", "confidential", "restricted"]
+            biometric_data: "restricted"
+            creator_content: "confidential"
+          - type: "encryption-in-transit"
+            protocols: ["TLS 1.3", "mTLS"]
+          - type: "encryption-at-rest"
+            algorithms: ["AES-256-GCM", "ChaCha20-Poly1305"]
+
+  # Creative Identity Platform specific compliance
+  cip-compliance.yaml: |
+    # Creative Identity Platform Specific Compliance
+    platform_controls:
+      - id: "CIP-AUTH-001"
+        title: "Biometric Data Encryption"
+        description: "All biometric data must be encrypted with approved algorithms"
+        validation:
+          - type: "encryption-algorithm"
+            approved: ["AES-256-GCM", "ChaCha20-Poly1305"]
+            key_rotation: "90d"
+          - type: "secure-storage"
+            storage_type: "encrypted-volume"
+            backup_encryption: true
+            
+      - id: "CIP-AUTH-002"
+        title: "Multi-Factor Authentication"
+        description: "All creator accounts must use MFA"
+        validation:
+          - type: "mfa-coverage"
+            target_percentage: 100
+            allowed_factors: ["biometric", "totp", "webauthn", "sms"]
+            
+      - id: "CIP-CONTENT-001"
+        title: "Content Authenticity Verification"
+        description: "All content must be verified using C2PA standards"
+        validation:
+          - type: "c2pa-compliance"
+            required: true
+            manifest_validation: true
+            signature_verification: true
+            
+      - id: "CIP-BLOCKCHAIN-001"
+        title: "Smart Contract Security"
+        description: "All smart contracts must pass security audits"
+        validation:
+          - type: "audit-requirement"
+            tools: ["mythril", "slither", "echidna"]
+            coverage: "100%"
+          - type: "formal-verification"
+            required_for: ["identity-registry", "content-licensing"]
+            
+      - id: "CIP-PRIVACY-001"
+        title: "Creator Data Privacy"
+        description: "Creator personal data must be privacy-protected"
+        validation:
+          - type: "data-minimization"
+            collect_only_necessary: true
+          - type: "pseudonymization"
+            for_analytics: true
+          - type: "consent-management"
+            granular: true
+            withdrawable: true
+
+---
+# Compliance validation CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: compliance-validation
+  namespace: creative-identity
+spec:
+  schedule: "0 6 * * 1" # Weekly on Monday at 6 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: compliance-validator
+          restartPolicy: OnFailure
+          containers:
+          - name: compliance-validator
+            image: creative-identity/compliance-validator:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              
+              echo "Starting compliance validation for Creative Identity Platform"
+              
+              # GDPR Compliance Check
+              echo "Validating GDPR compliance..."
+              python /app/validators/gdpr_validator.py \
+                --config /config/gdpr-validation.yaml \
+                --output /results/gdpr-compliance.json
+              
+              # SOC 2 Compliance Check
+              echo "Validating SOC 2 compliance..."
+              python /app/validators/soc2_validator.py \
+                --config /config/soc2-validation.yaml \
+                --output /results/soc2-compliance.json
+              
+              # Platform-specific compliance
+              echo "Validating Creative Identity Platform compliance..."
+              python /app/validators/cip_validator.py \
+                --config /config/cip-compliance.yaml \
+                --output /results/cip-compliance.json
+              
+              # Aggregate results
+              echo "Generating compliance report..."
+              python /app/report_generator.py \
+                --input-dir /results/ \
+                --output /results/compliance-report.html \
+                --format html
+              
+              # Upload to compliance dashboard
+              if [ -n "$COMPLIANCE_DASHBOARD_URL" ]; then
+                echo "Uploading results to compliance dashboard..."
+                curl -X POST "$COMPLIANCE_DASHBOARD_URL/api/reports" \
+                  -H "Content-Type: application/json" \
+                  -H "Authorization: Bearer $COMPLIANCE_API_TOKEN" \
+                  -d @/results/compliance-report.json
+              fi
+              
+              echo "Compliance validation completed"
+              
+            env:
+            - name: COMPLIANCE_DASHBOARD_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: compliance-config
+                  key: dashboard-url
+            - name: COMPLIANCE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: compliance-credentials
+                  key: api-token
+            volumeMounts:
+            - name: compliance-config
+              mountPath: /config
+            - name: source-code
+              mountPath: /app/source
+            - name: results
+              mountPath: /results
+            resources:
+              requests:
+                memory: 512Mi
+                cpu: 200m
+              limits:
+                memory: 2Gi
+                cpu: 1
+          volumes:
+          - name: compliance-config
+            configMap:
+              name: compliance-validation
+          - name: source-code
+            emptyDir: {} # In real deployment, this would be the source code
+          - name: results
+            persistentVolumeClaim:
+              claimName: compliance-results
+
+---
+# OPA (Open Policy Agent) for policy enforcement
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa-gatekeeper
+  namespace: creative-identity
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: opa-gatekeeper
+  template:
+    metadata:
+      labels:
+        app: opa-gatekeeper
+    spec:
+      serviceAccountName: opa-gatekeeper
+      containers:
+      - name: opa
+        image: openpolicyagent/opa:0.58.0-envoy
+        ports:
+        - containerPort: 8181
+        args:
+          - "run"
+          - "--server"
+          - "--addr=0.0.0.0:8181"
+          - "--diagnostic-addr=0.0.0.0:8282"
+          - "--set=plugins.envoy_ext_authz_grpc.addr=:9191"
+          - "--set=plugins.envoy_ext_authz_grpc.query=data.envoy.authz.allow"
+          - "--set=decision_logs.console=true"
+          - "/policies"
+        volumeMounts:
+        - name: opa-policies
+          mountPath: /policies
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 100m
+          limits:
+            memory: 512Mi
+            cpu: 500m
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8282
+        readinessProbe:
+          httpGet:
+            path: /health?bundle=true
+            port: 8282
+      volumes:
+      - name: opa-policies
+        configMap:
+          name: opa-policies
+
+---
+# OPA policies for Creative Identity Platform
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-policies
+  namespace: creative-identity
+data:
+  # Authentication and authorization policies
+  authz.rego: |
+    package envoy.authz
+    
+    import future.keywords.if
+    import future.keywords.in
+    
+    # Default deny
+    default allow = false
+    
+    # Allow health checks
+    allow if {
+        input.attributes.request.http.path == "/health"
+    }
+    
+    # Allow public API endpoints
+    allow if {
+        input.attributes.request.http.path in ["/api/health", "/api/status"]
+    }
+    
+    # Biometric verification requires special authorization
+    allow if {
+        input.attributes.request.http.path == "/api/biometric/verify"
+        input.attributes.request.http.headers.authorization
+        is_biometric_authorized
+    }
+    
+    # Identity registration requires consent verification
+    allow if {
+        input.attributes.request.http.path == "/api/identity/register"
+        input.attributes.request.http.method == "POST"
+        has_valid_consent
+    }
+    
+    # Admin endpoints require elevated privileges
+    allow if {
+        startswith(input.attributes.request.http.path, "/api/admin/")
+        is_admin_user
+    }
+    
+    # Helper functions
+    is_biometric_authorized if {
+        header := input.attributes.request.http.headers.authorization
+        token := substring(header, 7, -1) # Remove "Bearer "
+        payload := io.jwt.decode_verify(token, {"secret": data.jwt_secret})
+        payload[2].scope == "biometric:verify"
+    }
+    
+    has_valid_consent if {
+        body := json.unmarshal(base64.decode(input.attributes.request.http.body))
+        body.consent.biometric == true
+        body.consent.data_processing == true
+        body.consent.timestamp
+    }
+    
+    is_admin_user if {
+        header := input.attributes.request.http.headers.authorization
+        token := substring(header, 7, -1)
+        payload := io.jwt.decode_verify(token, {"secret": data.jwt_secret})
+        payload[2].role == "admin"
+    }
+
+  # Data privacy policies
+  privacy.rego: |
+    package creative_identity.privacy
+    
+    # Data classification rules
+    classify_data(data_type) = "restricted" if {
+        data_type in ["biometric", "private_key", "seed_phrase"]
+    }
+    
+    classify_data(data_type) = "confidential" if {
+        data_type in ["creator_content", "user_profile", "earnings"]
+    }
+    
+    classify_data(data_type) = "internal" if {
+        data_type in ["analytics", "metrics", "logs"]
+    }
+    
+    classify_data(data_type) = "public" if {
+        data_type in ["public_profile", "published_content"]
+    }
+    
+    # Data retention policies
+    retention_period(data_type) = days if {
+        data_type == "biometric"
+        days := 1095 # 3 years
+    }
+    
+    retention_period(data_type) = days if {
+        data_type == "creator_content"
+        days := 2555 # 7 years
+    }
+    
+    retention_period(data_type) = days if {
+        data_type == "user_profile"
+        days := 2190 # 6 years
+    }
+    
+    # GDPR compliance checks
+    gdpr_compliant(operation) if {
+        operation.lawful_basis
+        operation.purpose_limitation
+        operation.data_minimization
+        operation.consent_management
+    }
+
+---
+# Service for OPA
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa-gatekeeper
+  namespace: creative-identity
+spec:
+  selector:
+    app: opa-gatekeeper
+  ports:
+  - name: http
+    port: 8181
+    targetPort: 8181
+  - name: grpc
+    port: 9191
+    targetPort: 9191
+
+---
+# ServiceAccount and RBAC for compliance validator
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: compliance-validator
+  namespace: creative-identity
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: compliance-validator
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: compliance-validator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: compliance-validator
+subjects:
+- kind: ServiceAccount
+  name: compliance-validator
+  namespace: creative-identity

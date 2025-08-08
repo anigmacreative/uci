@@ -1,0 +1,548 @@
+# PostgreSQL cluster configuration for Creative Identity Platform
+# Optimized for viral growth with read replicas and connection pooling
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: creative-identity-postgres
+  namespace: creative-identity-production
+  labels:
+    app: postgres
+    component: database
+    tier: data
+spec:
+  # Cluster configuration for high availability and viral growth
+  instances: 3
+  primaryUpdateStrategy: unsupervised
+  
+  # PostgreSQL configuration optimized for Creative Identity Platform
+  postgresql:
+    parameters:
+      # Connection settings (optimized for high concurrency)
+      max_connections: "500"
+      superuser_reserved_connections: "5"
+      shared_preload_libraries: "pg_stat_statements,auto_explain,pg_cron,timescaledb"
+      
+      # Memory settings (optimized for 8GB+ instances)
+      shared_buffers: "2GB"
+      effective_cache_size: "6GB"
+      work_mem: "32MB"
+      maintenance_work_mem: "512MB"
+      
+      # Checkpoint settings for high write workload
+      checkpoint_completion_target: "0.8"
+      wal_buffers: "64MB"
+      checkpoint_timeout: "10min"
+      max_wal_size: "4GB"
+      min_wal_size: "1GB"
+      
+      # Query optimization for Creative Identity workloads
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      default_statistics_target: "100"
+      
+      # Logging and monitoring
+      log_statement: "mod"
+      log_min_duration_statement: "1000"
+      log_checkpoints: "on"
+      log_connections: "on"
+      log_disconnections: "on"
+      log_lock_waits: "on"
+      
+      # Performance monitoring
+      track_activities: "on"
+      track_counts: "on"
+      track_io_timing: "on"
+      track_functions: "all"
+      
+      # Auto-explain for slow queries
+      auto_explain.log_min_duration: "5s"
+      auto_explain.log_analyze: "on"
+      auto_explain.log_buffers: "on"
+      auto_explain.log_format: "json"
+      
+      # TimescaleDB settings for time-series data
+      timescaledb.max_background_workers: "8"
+      
+  # Bootstrap configuration
+  bootstrap:
+    initdb:
+      database: creative_identity_production
+      owner: creative_identity
+      secret:
+        name: postgres-credentials
+      postInitSQL:
+        - |
+          -- Create TimescaleDB extension for analytics
+          CREATE EXTENSION IF NOT EXISTS timescaledb;
+          CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+          CREATE EXTENSION IF NOT EXISTS pg_cron;
+          CREATE EXTENSION IF NOT EXISTS uuid-ossp;
+          CREATE EXTENSION IF NOT EXISTS pgcrypto;
+          
+          -- Create application schemas
+          CREATE SCHEMA IF NOT EXISTS identity;
+          CREATE SCHEMA IF NOT EXISTS content;
+          CREATE SCHEMA IF NOT EXISTS platforms;
+          CREATE SCHEMA IF NOT EXISTS analytics;
+          CREATE SCHEMA IF NOT EXISTS blockchain;
+          
+          -- Grant permissions
+          GRANT USAGE ON SCHEMA identity TO creative_identity;
+          GRANT USAGE ON SCHEMA content TO creative_identity;
+          GRANT USAGE ON SCHEMA platforms TO creative_identity;
+          GRANT USAGE ON SCHEMA analytics TO creative_identity;
+          GRANT USAGE ON SCHEMA blockchain TO creative_identity;
+          
+          -- Create application-specific roles
+          CREATE ROLE creative_identity_app;
+          CREATE ROLE creative_identity_readonly;
+          CREATE ROLE creative_identity_analytics;
+          
+          -- Grant appropriate permissions
+          GRANT CONNECT ON DATABASE creative_identity_production TO creative_identity_app;
+          GRANT CONNECT ON DATABASE creative_identity_production TO creative_identity_readonly;
+          GRANT CONNECT ON DATABASE creative_identity_production TO creative_identity_analytics;
+
+  # Resource requirements for viral growth
+  resources:
+    requests:
+      memory: "4Gi"
+      cpu: "2"
+    limits:
+      memory: "8Gi"
+      cpu: "4"
+
+  # Storage configuration with high IOPS for viral growth
+  storage:
+    size: "500Gi"
+    storageClass: "fast-ssd"
+    
+  # Monitoring configuration
+  monitoring:
+    enabled: true
+    podMonitorNamespace: "monitoring"
+    
+  # Backup configuration
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://creative-identity-backups/postgres"
+      s3Credentials:
+        accessKeyId:
+          name: "postgres-backup-credentials"
+          key: "ACCESS_KEY_ID"
+        secretAccessKey:
+          name: "postgres-backup-credentials"
+          key: "SECRET_ACCESS_KEY"
+      wal:
+        retention: "7d"
+      data:
+        retention: "30d"
+      
+---
+# Connection pooler (PgBouncer) for handling viral growth traffic
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: creative-identity-pooler
+  namespace: creative-identity-production
+spec:
+  cluster:
+    name: creative-identity-postgres
+  
+  instances: 3
+  type: rw
+  
+  # PgBouncer configuration optimized for viral growth
+  pgbouncer:
+    poolMode: transaction
+    parameters:
+      # Connection pool settings for high concurrency
+      default_pool_size: "100"
+      max_client_conn: "1000"
+      reserve_pool_size: "10"
+      pool_mode: "transaction"
+      
+      # Timing settings
+      server_idle_timeout: "600"
+      server_connect_timeout: "15"
+      server_login_retry: "5"
+      query_timeout: "0"
+      query_wait_timeout: "120"
+      
+      # Performance settings
+      listen_backlog: "512"
+      tcp_keepalive: "1"
+      tcp_keepcnt: "3"
+      tcp_keepidle: "600"
+      tcp_keepintvl: "30"
+      
+      # Logging
+      log_connections: "1"
+      log_disconnections: "1"
+      log_pooler_errors: "1"
+      
+  monitoring:
+    enabled: true
+    
+  # Resource allocation for connection pooling
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "1Gi"
+      cpu: "1"
+
+---
+# Read replica cluster for analytics and reporting
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: creative-identity-postgres-readonly
+  namespace: creative-identity-production
+  labels:
+    app: postgres
+    component: database
+    tier: readonly
+spec:
+  instances: 2
+  
+  # Bootstrap from primary cluster
+  bootstrap:
+    pg_basebackup:
+      source: creative-identity-postgres
+      
+  postgresql:
+    parameters:
+      # Read-only optimization
+      hot_standby: "on"
+      max_standby_streaming_delay: "30s"
+      hot_standby_feedback: "on"
+      
+      # Memory settings optimized for read workloads
+      shared_buffers: "1GB"
+      effective_cache_size: "4GB"
+      work_mem: "64MB"
+      
+      # Query optimization for analytics
+      random_page_cost: "1.0"
+      seq_page_cost: "1.0"
+      
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1"
+    limits:
+      memory: "4Gi"
+      cpu: "2"
+      
+  storage:
+    size: "500Gi"
+    storageClass: "fast-ssd"
+
+---
+# Database sharding configuration for viral growth
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sharding-config
+  namespace: creative-identity-production
+data:
+  sharding-strategy.yaml: |
+    # Creative Identity Platform Database Sharding Strategy
+    
+    # Sharding approach: Horizontal partitioning by user_id hash
+    sharding:
+      strategy: "hash_based"
+      shard_key: "user_id"
+      hash_function: "consistent_hash"
+      
+      # Shard configuration for viral growth (supports 10M+ users)
+      shards:
+        - name: "shard_01"
+          database: "creative_identity_shard_01"
+          hash_range: "0x00000000-0x1FFFFFFF"
+          primary_host: "postgres-shard-01-primary.creative-identity-production.svc.cluster.local"
+          readonly_host: "postgres-shard-01-readonly.creative-identity-production.svc.cluster.local"
+          weight: 25
+          
+        - name: "shard_02" 
+          database: "creative_identity_shard_02"
+          hash_range: "0x20000000-0x3FFFFFFF"
+          primary_host: "postgres-shard-02-primary.creative-identity-production.svc.cluster.local"
+          readonly_host: "postgres-shard-02-readonly.creative-identity-production.svc.cluster.local"
+          weight: 25
+          
+        - name: "shard_03"
+          database: "creative_identity_shard_03" 
+          hash_range: "0x40000000-0x5FFFFFFF"
+          primary_host: "postgres-shard-03-primary.creative-identity-production.svc.cluster.local"
+          readonly_host: "postgres-shard-03-readonly.creative-identity-production.svc.cluster.local"
+          weight: 25
+          
+        - name: "shard_04"
+          database: "creative_identity_shard_04"
+          hash_range: "0x60000000-0x7FFFFFFF"
+          primary_host: "postgres-shard-04-primary.creative-identity-production.svc.cluster.local"
+          readonly_host: "postgres-shard-04-readonly.creative-identity-production.svc.cluster.local"
+          weight: 25
+      
+      # Tables to shard (user-specific data)
+      sharded_tables:
+        - table: "identity.user_profiles"
+          shard_key: "user_id"
+          
+        - table: "identity.biometric_data"
+          shard_key: "user_id"
+          
+        - table: "content.creator_content"
+          shard_key: "creator_id"
+          
+        - table: "platforms.platform_connections"
+          shard_key: "user_id"
+          
+        - table: "analytics.user_events"
+          shard_key: "user_id"
+          partition_by: "created_at" # Also partition by time
+          
+      # Global tables (non-sharded, replicated)
+      global_tables:
+        - table: "identity.verification_providers"
+        - table: "platforms.supported_platforms" 
+        - table: "content.content_types"
+        - table: "blockchain.smart_contracts"
+        
+  # Redis cluster configuration for caching and sessions
+  redis-cluster.yaml: |
+    # Redis Cluster for Creative Identity Platform
+    cluster:
+      name: "creative-identity-redis"
+      nodes: 6
+      replicas: 1
+      
+      # Memory optimization for viral growth
+      memory_policy: "allkeys-lru"
+      max_memory: "4gb"
+      save_policy: "900 1 300 10 60 10000"
+      
+      # Performance settings
+      tcp_keepalive: "300"
+      tcp_backlog: "511"
+      timeout: "0"
+      
+      # Cluster-specific settings
+      cluster_enabled: "yes"
+      cluster_config_file: "nodes.conf"
+      cluster_node_timeout: "5000"
+      cluster_require_full_coverage: "no"
+      
+    # Data distribution strategy
+    key_distribution:
+      # User sessions (shard by user_id)
+      sessions:
+        pattern: "session:*"
+        ttl: "7200" # 2 hours
+        
+      # Biometric verification cache
+      biometric_cache:
+        pattern: "biometric:*"
+        ttl: "300" # 5 minutes
+        
+      # Content verification cache
+      content_cache:
+        pattern: "content:*"
+        ttl: "3600" # 1 hour
+        
+      # Platform sync cache
+      platform_cache:
+        pattern: "platform:*"
+        ttl: "1800" # 30 minutes
+        
+      # Rate limiting
+      rate_limits:
+        pattern: "rate_limit:*"
+        ttl: "60" # 1 minute
+
+---
+# Database migration and optimization CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: database-optimization
+  namespace: creative-identity-production
+spec:
+  schedule: "0 2 * * 0" # Weekly on Sunday at 2 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: database-optimizer
+          restartPolicy: OnFailure
+          containers:
+          - name: optimizer
+            image: creative-identity/database-optimizer:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              
+              echo "Starting database optimization for Creative Identity Platform"
+              
+              # Connect to primary database
+              export PGPASSWORD="$POSTGRES_PASSWORD"
+              
+              # Update statistics for query optimization
+              echo "Updating table statistics..."
+              psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "ANALYZE;"
+              
+              # Reindex heavily used tables
+              echo "Reindexing critical tables..."
+              psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "
+                REINDEX INDEX CONCURRENTLY identity.idx_user_profiles_user_id;
+                REINDEX INDEX CONCURRENTLY identity.idx_biometric_data_user_id;
+                REINDEX INDEX CONCURRENTLY content.idx_creator_content_creator_id;
+                REINDEX INDEX CONCURRENTLY analytics.idx_user_events_user_id_created_at;
+              "
+              
+              # Clean up old partitions (for analytics tables)
+              echo "Cleaning up old partitions..."
+              psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -f /scripts/cleanup_partitions.sql
+              
+              # Update shared_preload_libraries if needed
+              echo "Checking PostgreSQL configuration..."
+              psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "
+                SELECT name, setting FROM pg_settings 
+                WHERE name IN ('shared_buffers', 'work_mem', 'maintenance_work_mem', 'effective_cache_size');
+              "
+              
+              # Generate performance report
+              echo "Generating performance report..."
+              psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "
+                SELECT 
+                  schemaname,
+                  tablename,
+                  attname,
+                  n_distinct,
+                  correlation
+                FROM pg_stats 
+                WHERE schemaname IN ('identity', 'content', 'platforms', 'analytics')
+                ORDER BY schemaname, tablename, attname;
+              " > /reports/table_statistics.txt
+              
+              # Check for unused indexes
+              psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "
+                SELECT 
+                  schemaname,
+                  tablename,
+                  indexname,
+                  idx_scan,
+                  pg_size_pretty(pg_relation_size(indexrelid)) as size
+                FROM pg_stat_user_indexes 
+                WHERE idx_scan = 0
+                ORDER BY pg_relation_size(indexrelid) DESC;
+              " > /reports/unused_indexes.txt
+              
+              echo "Database optimization completed"
+              
+            env:
+            - name: POSTGRES_HOST
+              value: "creative-identity-postgres-rw"
+            - name: POSTGRES_USER
+              value: "creative_identity"
+            - name: POSTGRES_DB  
+              value: "creative_identity_production"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            volumeMounts:
+            - name: optimization-scripts
+              mountPath: /scripts
+            - name: reports
+              mountPath: /reports
+            resources:
+              requests:
+                memory: 512Mi
+                cpu: 200m
+              limits:
+                memory: 2Gi
+                cpu: 1
+          volumes:
+          - name: optimization-scripts
+            configMap:
+              name: database-scripts
+          - name: reports
+            persistentVolumeClaim:
+              claimName: database-reports
+
+---
+# Database monitoring dashboard
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-monitoring-dashboard
+  namespace: creative-identity-production
+data:
+  postgres-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "Creative Identity Platform - Database Performance",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Database Connections",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "cnpg_postgres_connections_used{cluster=\"creative-identity-postgres\"}",
+                "legendFormat": "Used Connections"
+              },
+              {
+                "expr": "cnpg_postgres_connections_total{cluster=\"creative-identity-postgres\"}",
+                "legendFormat": "Total Connections"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "Query Performance",
+            "type": "graph", 
+            "targets": [
+              {
+                "expr": "rate(cnpg_postgres_stat_database_tup_returned_total{cluster=\"creative-identity-postgres\"}[5m])",
+                "legendFormat": "Tuples Returned/sec"
+              },
+              {
+                "expr": "rate(cnpg_postgres_stat_database_tup_fetched_total{cluster=\"creative-identity-postgres\"}[5m])",
+                "legendFormat": "Tuples Fetched/sec"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Cache Hit Ratio",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "cnpg_postgres_stat_database_blks_hit_total{cluster=\"creative-identity-postgres\"} / (cnpg_postgres_stat_database_blks_hit_total{cluster=\"creative-identity-postgres\"} + cnpg_postgres_stat_database_blks_read_total{cluster=\"creative-identity-postgres\"})",
+                "legendFormat": "Buffer Cache Hit Ratio"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Replication Lag",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "cnpg_postgres_replication_lag{cluster=\"creative-identity-postgres\"}",
+                "legendFormat": "Replication Lag ({{instance}})"
+              }
+            ]
+          }
+        ]
+      }
+    }

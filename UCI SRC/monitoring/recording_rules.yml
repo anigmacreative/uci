@@ -1,0 +1,200 @@
+# Recording rules for Creative Identity Platform
+groups:
+  # HTTP Request Metrics
+  - name: http_requests
+    interval: 30s
+    rules:
+      - record: creative_identity:http_request_rate
+        expr: sum(rate(http_requests_total[5m])) by (instance, method, status)
+
+      - record: creative_identity:http_request_duration_p50
+        expr: histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (instance, le))
+
+      - record: creative_identity:http_request_duration_p95
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (instance, le))
+
+      - record: creative_identity:http_request_duration_p99
+        expr: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (instance, le))
+
+      - record: creative_identity:http_error_rate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) by (instance) / sum(rate(http_requests_total[5m])) by (instance)
+
+  # Identity System Metrics
+  - name: identity_system
+    interval: 30s
+    rules:
+      - record: creative_identity:identity_creation_rate
+        expr: sum(rate(identity_creation_total[5m]))
+
+      - record: creative_identity:identity_creation_success_rate
+        expr: sum(rate(identity_creation_success_total[5m])) / sum(rate(identity_creation_total[5m]))
+
+      - record: creative_identity:biometric_verification_duration_p95
+        expr: histogram_quantile(0.95, sum(rate(biometric_verification_duration_seconds_bucket[5m])) by (le))
+
+      - record: creative_identity:active_identities_total
+        expr: max(active_creative_identities_total)
+
+      - record: creative_identity:daily_identity_registrations
+        expr: increase(identity_creation_total[24h])
+
+  # Platform Integration Metrics
+  - name: platform_integration
+    interval: 30s
+    rules:
+      - record: creative_identity:platform_sync_rate
+        expr: sum(rate(platform_sync_total[5m])) by (platform)
+
+      - record: creative_identity:platform_sync_success_rate
+        expr: sum(rate(platform_sync_success_total[5m])) by (platform) / sum(rate(platform_sync_total[5m])) by (platform)
+
+      - record: creative_identity:cross_platform_sync_duration_p95
+        expr: histogram_quantile(0.95, sum(rate(cross_platform_sync_duration_seconds_bucket[5m])) by (platform, le))
+
+      - record: creative_identity:connected_platforms_per_user
+        expr: avg(connected_platforms_count) by (user_segment)
+
+  # Content Verification Metrics
+  - name: content_verification
+    interval: 30s
+    rules:
+      - record: creative_identity:content_verification_rate
+        expr: sum(rate(content_verification_total[5m]))
+
+      - record: creative_identity:content_verification_success_rate
+        expr: sum(rate(content_verification_success_total[5m])) / sum(rate(content_verification_total[5m]))
+
+      - record: creative_identity:authenticity_score_avg
+        expr: avg(content_authenticity_score)
+
+      - record: creative_identity:deepfake_detection_rate
+        expr: sum(rate(deepfake_detected_total[5m])) / sum(rate(content_verification_total[5m]))
+
+  # Blockchain & Web3 Metrics
+  - name: blockchain
+    interval: 60s
+    rules:
+      - record: creative_identity:blockchain_transaction_rate
+        expr: sum(rate(blockchain_transactions_total[5m])) by (network, type)
+
+      - record: creative_identity:blockchain_transaction_success_rate
+        expr: sum(rate(blockchain_transactions_success_total[5m])) by (network) / sum(rate(blockchain_transactions_total[5m])) by (network)
+
+      - record: creative_identity:avg_gas_price_gwei
+        expr: avg(blockchain_gas_price_gwei) by (network)
+
+      - record: creative_identity:blockchain_transaction_cost_usd
+        expr: avg(blockchain_transaction_cost_usd) by (network, type)
+
+      - record: creative_identity:nft_minting_rate
+        expr: sum(rate(nft_minted_total[5m]))
+
+  # Real-time Collaboration Metrics
+  - name: realtime_collaboration
+    interval: 30s
+    rules:
+      - record: creative_identity:websocket_connections_active
+        expr: sum(websocket_connections_active)
+
+      - record: creative_identity:collaboration_sessions_active
+        expr: sum(collaboration_sessions_active)
+
+      - record: creative_identity:websocket_message_rate
+        expr: sum(rate(websocket_messages_total[5m])) by (type)
+
+      - record: creative_identity:collaboration_latency_p95
+        expr: histogram_quantile(0.95, sum(rate(collaboration_latency_seconds_bucket[5m])) by (le))
+
+  # Creator Economy Metrics
+  - name: creator_economy
+    interval: 60s
+    rules:
+      - record: creative_identity:revenue_rate_usd
+        expr: sum(rate(revenue_generated_usd_total[1h]))
+
+      - record: creative_identity:transaction_volume_usd
+        expr: sum(increase(transaction_volume_usd_total[1h]))
+
+      - record: creative_identity:avg_creator_earnings_usd
+        expr: avg(creator_earnings_usd) by (tier, region)
+
+      - record: creative_identity:monetization_conversion_rate
+        expr: sum(monetizing_creators_total) / sum(active_creators_total)
+
+  # User Experience Metrics
+  - name: user_experience
+    interval: 30s
+    rules:
+      - record: creative_identity:daily_active_users
+        expr: max(daily_active_users_total)
+
+      - record: creative_identity:monthly_active_users
+        expr: max(monthly_active_users_total)
+
+      - record: creative_identity:user_retention_rate_7d
+        expr: sum(users_retained_7d) / sum(users_registered_7d_ago)
+
+      - record: creative_identity:session_duration_avg_minutes
+        expr: avg(user_session_duration_seconds) / 60
+
+      - record: creative_identity:bounce_rate
+        expr: sum(single_page_sessions) / sum(total_sessions)
+
+  # System Performance Metrics
+  - name: system_performance
+    interval: 30s
+    rules:
+      - record: creative_identity:cpu_usage_percent
+        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+
+      - record: creative_identity:memory_usage_percent
+        expr: (node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Cached_bytes - node_memory_Buffers_bytes) / node_memory_MemTotal_bytes * 100
+
+      - record: creative_identity:disk_usage_percent
+        expr: (node_filesystem_size_bytes - node_filesystem_free_bytes) / node_filesystem_size_bytes * 100
+
+      - record: creative_identity:network_throughput_mbps
+        expr: (rate(node_network_receive_bytes_total[5m]) + rate(node_network_transmit_bytes_total[5m])) / 1024 / 1024
+
+  # Database Performance Metrics
+  - name: database_performance
+    interval: 30s
+    rules:
+      - record: creative_identity:db_query_rate
+        expr: sum(rate(pg_stat_database_tup_returned[5m])) by (datname)
+
+      - record: creative_identity:db_connection_utilization
+        expr: pg_stat_database_numbackends / pg_settings_max_connections
+
+      - record: creative_identity:db_cache_hit_ratio
+        expr: pg_stat_database_blks_hit / (pg_stat_database_blks_hit + pg_stat_database_blks_read)
+
+      - record: creative_identity:redis_memory_usage_percent
+        expr: redis_memory_used_bytes / redis_memory_max_bytes * 100
+
+      - record: creative_identity:redis_hit_rate
+        expr: rate(redis_keyspace_hits_total[5m]) / (rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m]))
+
+  # Business Intelligence Metrics
+  - name: business_intelligence
+    interval: 300s # 5 minute intervals for business metrics
+    rules:
+      - record: creative_identity:viral_coefficient
+        expr: sum(invited_users_registered) / sum(inviting_users)
+
+      - record: creative_identity:creator_onboarding_completion_rate
+        expr: sum(creator_onboarding_completed) / sum(creator_onboarding_started)
+
+      - record: creative_identity:platform_adoption_rate
+        expr: sum(multi_platform_users) / sum(total_users)
+
+      - record: creative_identity:content_authenticity_improvement
+        expr: avg_over_time(content_authenticity_score[7d]) - avg_over_time(content_authenticity_score[30d])
+
+      - record: creative_identity:creator_ecosystem_health_score
+        expr: (
+          creative_identity:creator_onboarding_completion_rate * 0.3 +
+          creative_identity:monetization_conversion_rate * 0.3 +
+          creative_identity:user_retention_rate_7d * 0.2 +
+          creative_identity:platform_adoption_rate * 0.2
+        ) * 100

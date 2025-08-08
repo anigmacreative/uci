@@ -1,0 +1,618 @@
+# Redis Cluster configuration for Creative Identity Platform
+# Optimized for viral growth scenarios with caching and session management
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-cluster-config
+  namespace: creative-identity-production
+data:
+  redis.conf: |
+    # Redis configuration for Creative Identity Platform viral growth
+    
+    # Network settings
+    bind 0.0.0.0
+    port 6379
+    tcp-backlog 511
+    timeout 0
+    tcp-keepalive 300
+    
+    # General settings
+    daemonize no
+    supervised no
+    pidfile /var/run/redis.pid
+    loglevel notice
+    logfile ""
+    databases 16
+    
+    # Memory management for viral growth
+    maxmemory 4gb
+    maxmemory-policy allkeys-lru
+    maxmemory-samples 5
+    
+    # Persistence settings (optimized for performance)
+    save 900 1
+    save 300 10
+    save 60 10000
+    stop-writes-on-bgsave-error yes
+    rdbcompression yes
+    rdbchecksum yes
+    dbfilename dump.rdb
+    dir /data
+    
+    # AOF settings
+    appendonly yes
+    appendfilename "appendonly.aof"
+    appendfsync everysec
+    no-appendfsync-on-rewrite no
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+    aof-load-truncated yes
+    aof-use-rdb-preamble yes
+    
+    # Cluster settings
+    cluster-enabled yes
+    cluster-config-file nodes-6379.conf
+    cluster-node-timeout 5000
+    cluster-require-full-coverage no
+    cluster-migration-barrier 1
+    
+    # Performance tuning
+    hash-max-ziplist-entries 512
+    hash-max-ziplist-value 64
+    list-max-ziplist-size -2
+    list-compress-depth 0
+    set-max-intset-entries 512
+    zset-max-ziplist-entries 128
+    zset-max-ziplist-value 64
+    hll-sparse-max-bytes 3000
+    
+    # Client settings for high concurrency
+    timeout 0
+    tcp-keepalive 300
+    maxclients 10000
+    
+    # Security settings
+    protected-mode no
+    requirepass ""
+    
+    # Slow log
+    slowlog-log-slower-than 10000
+    slowlog-max-len 128
+    
+    # Latency monitoring
+    latency-monitor-threshold 100
+    
+    # Creative Identity specific settings
+    notify-keyspace-events "Ex"
+    client-output-buffer-limit normal 0 0 0
+    client-output-buffer-limit replica 256mb 64mb 60
+    client-output-buffer-limit pubsub 32mb 8mb 60
+
+---
+# Redis Cluster StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  namespace: creative-identity-production
+  labels:
+    app: redis-cluster
+    component: cache
+spec:
+  serviceName: redis-cluster
+  replicas: 6
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: redis-cluster
+  template:
+    metadata:
+      labels:
+        app: redis-cluster
+        component: cache
+    spec:
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+          name: client
+        - containerPort: 16379
+          name: cluster
+        command: ["redis-server"]
+        args: ["/etc/redis/redis.conf"]
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: REDIS_CLUSTER_ANNOUNCE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+        volumeMounts:
+        - name: redis-config
+          mountPath: /etc/redis/
+        - name: redis-data
+          mountPath: /data
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      initContainers:
+      - name: redis-cluster-init
+        image: redis:7-alpine
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          # Wait for all pods to be ready
+          until [ "$(nslookup redis-cluster | grep -c "Address:")" -eq "7" ]; do
+            echo "Waiting for all Redis pods to be ready..."
+            sleep 5
+          done
+          
+          # Create cluster if it doesn't exist
+          if ! redis-cli --cluster check redis-cluster-0.redis-cluster.creative-identity-production.svc.cluster.local:6379; then
+            echo "Creating Redis cluster..."
+            redis-cli --cluster create \
+              redis-cluster-0.redis-cluster.creative-identity-production.svc.cluster.local:6379 \
+              redis-cluster-1.redis-cluster.creative-identity-production.svc.cluster.local:6379 \
+              redis-cluster-2.redis-cluster.creative-identity-production.svc.cluster.local:6379 \
+              redis-cluster-3.redis-cluster.creative-identity-production.svc.cluster.local:6379 \
+              redis-cluster-4.redis-cluster.creative-identity-production.svc.cluster.local:6379 \
+              redis-cluster-5.redis-cluster.creative-identity-production.svc.cluster.local:6379 \
+              --cluster-replicas 1 \
+              --cluster-yes
+            echo "Redis cluster created successfully"
+          else
+            echo "Redis cluster already exists"
+          fi
+      volumes:
+      - name: redis-config
+        configMap:
+          name: redis-cluster-config
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 50Gi
+
+---
+# Redis Cluster Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster
+  namespace: creative-identity-production
+  labels:
+    app: redis-cluster
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: client
+  - port: 16379
+    targetPort: 16379
+    name: cluster
+  selector:
+    app: redis-cluster
+
+---
+# Redis Cluster Service (Client Access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster-client
+  namespace: creative-identity-production
+  labels:
+    app: redis-cluster
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: client
+  selector:
+    app: redis-cluster
+
+---
+# Redis configuration for different data types
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-data-patterns
+  namespace: creative-identity-production
+data:
+  # Key patterns and TTL configurations for Creative Identity Platform
+  key-patterns.yaml: |
+    # Creative Identity Platform Redis Key Patterns
+    
+    patterns:
+      # User session management (viral growth ready)
+      sessions:
+        pattern: "session:{user_id}"
+        ttl: 7200 # 2 hours
+        description: "User authentication sessions"
+        sharding: "user_id"
+        estimated_size: "2KB"
+        peak_count: 1000000 # 1M concurrent sessions
+        
+      # Biometric verification cache
+      biometric:
+        pattern: "biometric:{user_id}:{type}"
+        ttl: 300 # 5 minutes
+        description: "Cached biometric verification results"
+        sharding: "user_id"
+        estimated_size: "512B"
+        peak_count: 500000
+        
+      # Content verification cache
+      content:
+        pattern: "content:{content_hash}"
+        ttl: 3600 # 1 hour
+        description: "C2PA and authenticity verification results"
+        sharding: "content_hash"
+        estimated_size: "1KB"
+        peak_count: 2000000
+        
+      # Platform sync locks and status
+      platform_sync:
+        pattern: "platform:{user_id}:{platform}"
+        ttl: 1800 # 30 minutes
+        description: "Platform synchronization status and locks"
+        sharding: "user_id"
+        estimated_size: "256B"
+        peak_count: 5000000
+        
+      # Rate limiting counters
+      rate_limit:
+        pattern: "rate:{endpoint}:{user_id}"
+        ttl: 60 # 1 minute sliding window
+        description: "API rate limiting counters"
+        sharding: "user_id"
+        estimated_size: "64B"
+        peak_count: 10000000
+        
+      # Real-time collaboration
+      collaboration:
+        pattern: "collab:{room_id}:{user_id}"
+        ttl: 3600 # 1 hour
+        description: "WebSocket collaboration room state"
+        sharding: "room_id"
+        estimated_size: "512B"
+        peak_count: 100000
+        
+      # Creator analytics cache
+      analytics:
+        pattern: "analytics:{identity_id}:{period}"
+        ttl: 1800 # 30 minutes
+        description: "Cached creator analytics and metrics"
+        sharding: "identity_id"
+        estimated_size: "2KB"
+        peak_count: 1000000
+        
+      # Blockchain transaction cache
+      blockchain:
+        pattern: "blockchain:{tx_hash}"
+        ttl: 86400 # 24 hours
+        description: "Blockchain transaction status and results"
+        sharding: "tx_hash"
+        estimated_size: "1KB"
+        peak_count: 500000
+        
+      # Content discovery cache
+      discovery:
+        pattern: "discover:{query_hash}"
+        ttl: 900 # 15 minutes
+        description: "Content discovery and search results"
+        sharding: "query_hash"
+        estimated_size: "4KB"
+        peak_count: 100000
+        
+      # Feature flags and configuration
+      config:
+        pattern: "config:{user_segment}:{feature}"
+        ttl: 3600 # 1 hour
+        description: "Feature flags and user-specific configuration"
+        sharding: "user_segment"
+        estimated_size: "128B"
+        peak_count: 50000
+
+---
+# Redis Monitoring and Alerts
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: redis-cluster-monitoring
+  namespace: creative-identity-production
+spec:
+  selector:
+    matchLabels:
+      app: redis-cluster
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 15s
+
+---
+# Redis performance optimization CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redis-optimization
+  namespace: creative-identity-production
+spec:
+  schedule: "0 3 * * *" # Daily at 3 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: redis-optimizer
+          restartPolicy: OnFailure
+          containers:
+          - name: redis-optimizer
+            image: redis:7-alpine
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              
+              echo "Starting Redis optimization for Creative Identity Platform"
+              
+              # Connect to Redis cluster
+              REDIS_NODES="redis-cluster-0.redis-cluster.creative-identity-production.svc.cluster.local:6379"
+              
+              # Memory usage report
+              echo "=== Redis Memory Usage ==="
+              redis-cli -h redis-cluster-0.redis-cluster.creative-identity-production.svc.cluster.local -p 6379 info memory
+              
+              # Key space analysis
+              echo "=== Key Space Analysis ==="
+              redis-cli -h redis-cluster-0.redis-cluster.creative-identity-production.svc.cluster.local -p 6379 info keyspace
+              
+              # Slow queries analysis
+              echo "=== Slow Log Analysis ==="
+              redis-cli -h redis-cluster-0.redis-cluster.creative-identity-production.svc.cluster.local -p 6379 slowlog get 10
+              
+              # Client connections
+              echo "=== Client Connections ==="
+              redis-cli -h redis-cluster-0.redis-cluster.creative-identity-production.svc.cluster.local -p 6379 info clients
+              
+              # Check for keys that should expire but haven't
+              echo "=== Expiration Analysis ==="
+              redis-cli -h redis-cluster-0.redis-cluster.creative-identity-production.svc.cluster.local -p 6379 --scan --pattern "session:*" | head -100 | while read key; do
+                ttl=$(redis-cli -h redis-cluster-0.redis-cluster.creative-identity-production.svc.cluster.local -p 6379 ttl "$key")
+                if [ "$ttl" -eq "-1" ]; then
+                  echo "Key without expiration: $key"
+                fi
+              done
+              
+              # Cluster health check
+              echo "=== Cluster Health ==="
+              redis-cli -h redis-cluster-0.redis-cluster.creative-identity-production.svc.cluster.local -p 6379 cluster nodes
+              
+              echo "Redis optimization analysis completed"
+              
+            resources:
+              requests:
+                memory: 128Mi
+                cpu: 50m
+              limits:
+                memory: 256Mi
+                cpu: 200m
+
+---
+# Redis backup configuration
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redis-backup
+  namespace: creative-identity-production
+spec:
+  schedule: "0 2 * * *" # Daily at 2 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: redis-backup
+          restartPolicy: OnFailure
+          containers:
+          - name: redis-backup
+            image: redis:7-alpine
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              
+              echo "Starting Redis backup for Creative Identity Platform"
+              
+              BACKUP_DATE=$(date +%Y-%m-%d_%H-%M-%S)
+              BACKUP_DIR="/backups/redis_$BACKUP_DATE"
+              
+              mkdir -p "$BACKUP_DIR"
+              
+              # Backup each Redis node
+              for i in {0..5}; do
+                NODE_HOST="redis-cluster-$i.redis-cluster.creative-identity-production.svc.cluster.local"
+                echo "Backing up Redis node: $NODE_HOST"
+                
+                # Trigger BGSAVE
+                redis-cli -h $NODE_HOST -p 6379 bgsave
+                
+                # Wait for backup to complete
+                while [ "$(redis-cli -h $NODE_HOST -p 6379 lastsave)" = "$(redis-cli -h $NODE_HOST -p 6379 lastsave)" ]; do
+                  sleep 5
+                done
+                
+                # Copy RDB file
+                kubectl cp creative-identity-production/redis-cluster-$i:/data/dump.rdb "$BACKUP_DIR/node_$i.rdb" || true
+              done
+              
+              # Create cluster configuration backup
+              redis-cli -h redis-cluster-0.redis-cluster.creative-identity-production.svc.cluster.local -p 6379 cluster nodes > "$BACKUP_DIR/cluster_nodes.txt"
+              
+              # Compress backup
+              tar -czf "/backups/redis_backup_$BACKUP_DATE.tar.gz" -C /backups "redis_$BACKUP_DATE"
+              rm -rf "$BACKUP_DIR"
+              
+              echo "Redis backup completed: redis_backup_$BACKUP_DATE.tar.gz"
+              
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backups
+            resources:
+              requests:
+                memory: 256Mi
+                cpu: 100m
+              limits:
+                memory: 512Mi
+                cpu: 500m
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: redis-backup-storage
+
+---
+# PVC for Redis backups
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-backup-storage
+  namespace: creative-identity-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# Redis cluster autoscaler (HPA for read replicas)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: redis-read-replicas-hpa
+  namespace: creative-identity-production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: redis-read-replicas
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: redis_connected_clients
+      target:
+        type: AverageValue
+        averageValue: "1000"
+        
+---
+# ServiceAccount and RBAC for Redis operations
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: redis-optimizer
+  namespace: creative-identity-production
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: redis-backup
+  namespace: creative-identity-production
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: redis-operations
+  namespace: creative-identity-production
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/exec"]
+  verbs: ["get", "list", "create"]
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: redis-optimizer-binding
+  namespace: creative-identity-production
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: redis-operations
+subjects:
+- kind: ServiceAccount
+  name: redis-optimizer
+  namespace: creative-identity-production
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: redis-backup-binding
+  namespace: creative-identity-production
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: redis-operations
+subjects:
+- kind: ServiceAccount
+  name: redis-backup
+  namespace: creative-identity-production

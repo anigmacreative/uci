@@ -1,0 +1,369 @@
+# OpenTelemetry Collector configuration for Creative Identity Platform
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: creative-identity
+data:
+  config.yaml: |
+    # OpenTelemetry Collector configuration
+    
+    receivers:
+      # OTLP receiver for traces, metrics, and logs
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+      # Prometheus metrics scraping
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: 'creative-identity-app'
+              static_configs:
+                - targets: ['creative-identity-app:3000']
+              metrics_path: '/api/metrics'
+              scrape_interval: 15s
+
+            - job_name: 'creative-identity-api'
+              static_configs:
+                - targets: ['creative-identity-api:3000']
+              metrics_path: '/api/v1/metrics'
+              scrape_interval: 15s
+
+            - job_name: 'websocket-service'
+              static_configs:
+                - targets: ['creative-identity-websocket:3001']
+              metrics_path: '/metrics'
+              scrape_interval: 15s
+
+      # Jaeger receiver for legacy traces
+      jaeger:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:14250
+          thrift_http:
+            endpoint: 0.0.0.0:14268
+          thrift_compact:
+            endpoint: 0.0.0.0:14267
+
+      # Zipkin receiver
+      zipkin:
+        endpoint: 0.0.0.0:9411
+
+      # File log receiver for application logs
+      filelog:
+        include:
+          - /var/log/creative-identity/*.log
+          - /var/log/containers/creative-identity-*.log
+        operators:
+          - type: json_parser
+            parse_from: attributes.log
+          - type: timestamp_parser
+            parse_from: attributes.timestamp
+            layout_type: epoch
+            layout: s
+
+      # System metrics
+      hostmetrics:
+        collection_interval: 30s
+        scrapers:
+          cpu:
+          disk:
+          filesystem:
+          load:
+          memory:
+          network:
+          process:
+
+      # Docker container metrics
+      docker_stats:
+        endpoint: unix:///var/run/docker.sock
+        collection_interval: 30s
+
+      # Kubernetes metrics
+      k8s_cluster:
+        auth_type: serviceAccount
+        node_conditions_to_report: [Ready, MemoryPressure, DiskPressure, PIDPressure]
+        allocatable_types_to_report: [cpu, memory, storage, ephemeral-storage]
+
+    processors:
+      # Batch processor for better performance
+      batch:
+        send_batch_size: 1024
+        timeout: 1s
+        send_batch_max_size: 2048
+
+      # Memory limiter to prevent OOM
+      memory_limiter:
+        limit_mib: 512
+        spike_limit_mib: 128
+        check_interval: 5s
+
+      # Resource processor to add platform metadata
+      resource:
+        attributes:
+          - key: service.platform
+            value: creative-identity
+            action: insert
+          - key: deployment.environment
+            from_attribute: k8s.deployment.name
+            action: extract
+          - key: service.version
+            from_attribute: k8s.container.image
+            action: extract
+
+      # Attributes processor for custom Creative Identity metrics
+      attributes/creative_identity:
+        actions:
+          # Add Creative Identity specific labels
+          - key: identity_platform
+            value: "true"
+            action: insert
+          
+          # Extract user segment from span attributes
+          - key: user_segment
+            from_attribute: user.segment
+            action: extract
+          
+          # Extract platform type from span attributes
+          - key: connected_platform
+            from_attribute: platform.type
+            action: extract
+
+      # Transform processor for custom metrics
+      transform/creative_identity:
+        metric_statements:
+          - context: metric
+            statements:
+              # Create custom identity creation metrics
+              - set(name, "creative_identity_registrations_total") where name == "http_requests_total" and attributes["endpoint"] == "/api/identity/register"
+              
+              # Transform biometric verification metrics
+              - set(name, "biometric_verification_duration_seconds") where name == "http_request_duration_seconds" and attributes["endpoint"] == "/api/biometric/verify"
+              
+              # Platform sync metrics
+              - set(name, "platform_sync_operations_total") where name == "http_requests_total" and attributes["endpoint"] == "/api/platforms/sync"
+
+      # Probabilistic sampler for traces
+      probabilistic_sampler:
+        sampling_percentage: 15.0 # Sample 15% of traces
+
+      # Tail sampling for intelligent trace sampling
+      tail_sampling:
+        decision_wait: 10s
+        num_traces: 50000
+        expected_new_traces_per_sec: 10
+        policies:
+          # Always sample error traces
+          - name: error_traces
+            type: status_code
+            status_code: {status_codes: [ERROR]}
+            
+          # Always sample traces with high latency
+          - name: high_latency
+            type: latency
+            latency: {threshold_ms: 5000}
+            
+          # Sample traces for critical operations
+          - name: critical_operations
+            type: string_attribute
+            string_attribute: {key: "operation.name", values: ["identity_register", "biometric_verify", "content_verify"]}
+            
+          # Probabilistic sampling for everything else
+          - name: probabilistic
+            type: probabilistic
+            probabilistic: {sampling_percentage: 5}
+
+    exporters:
+      # Jaeger exporter for traces
+      jaeger:
+        endpoint: jaeger-collector:14250
+        tls:
+          insecure: true
+
+      # Prometheus exporter for metrics
+      prometheus:
+        endpoint: "0.0.0.0:8889"
+        namespace: creative_identity
+        const_labels:
+          platform: creative-identity
+
+      # Elasticsearch exporter for logs
+      elasticsearch:
+        endpoint: http://elasticsearch:9200
+        index: creative-identity-logs
+        pipeline: creative_identity_pipeline
+        
+      # OTLP exporter for forwarding to other systems
+      otlp/jaeger:
+        endpoint: jaeger-collector:4317
+        tls:
+          insecure: true
+
+      # Logging exporter for debugging
+      logging:
+        loglevel: info
+
+      # File exporter for long-term storage
+      file/metrics:
+        path: /tmp/metrics.json
+      
+      file/traces:
+        path: /tmp/traces.json
+
+    extensions:
+      # Health check extension
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+      # pprof extension for performance profiling
+      pprof:
+        endpoint: 0.0.0.0:1777
+
+      # zpages extension for debugging
+      zpages:
+        endpoint: 0.0.0.0:55679
+
+    service:
+      extensions: [health_check, pprof, zpages]
+      
+      pipelines:
+        # Traces pipeline
+        traces:
+          receivers: [otlp, jaeger, zipkin]
+          processors: [memory_limiter, resource, attributes/creative_identity, probabilistic_sampler, tail_sampling, batch]
+          exporters: [jaeger, otlp/jaeger, logging]
+
+        # Metrics pipeline
+        metrics:
+          receivers: [otlp, prometheus, hostmetrics, docker_stats, k8s_cluster]
+          processors: [memory_limiter, resource, attributes/creative_identity, transform/creative_identity, batch]
+          exporters: [prometheus, file/metrics]
+
+        # Logs pipeline
+        logs:
+          receivers: [otlp, filelog]
+          processors: [memory_limiter, resource, attributes/creative_identity, batch]
+          exporters: [elasticsearch, logging]
+
+      telemetry:
+        logs:
+          level: "info"
+        metrics:
+          level: detailed
+          address: 0.0.0.0:8888
+
+---
+# OpenTelemetry Collector Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: creative-identity
+  labels:
+    app: otel-collector
+    component: telemetry
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+        component: telemetry
+    spec:
+      serviceAccountName: otel-collector
+      containers:
+      - name: otel-collector
+        image: otel/opentelemetry-collector-contrib:0.89.0
+        command:
+        - /otelcol-contrib
+        - --config=/conf/config.yaml
+        env:
+        - name: K8S_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: K8S_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: K8S_POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 100m
+          limits:
+            memory: 1Gi
+            cpu: 500m
+        ports:
+        - containerPort: 4317 # OTLP gRPC
+        - containerPort: 4318 # OTLP HTTP
+        - containerPort: 8889 # Prometheus metrics
+        - containerPort: 13133 # Health check
+        volumeMounts:
+        - name: config
+          mountPath: /conf
+        - name: varlog
+          mountPath: /var/log
+        - name: dockersock
+          mountPath: /var/run/docker.sock
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 13133
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 13133
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: otel-collector-config
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: dockersock
+        hostPath:
+          path: /var/run/docker.sock
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        effect: NoSchedule
+
+---
+# Service for OpenTelemetry Collector
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: creative-identity
+  labels:
+    app: otel-collector
+spec:
+  selector:
+    app: otel-collector
+  ports:
+  - name: otlp-grpc
+    port: 4317
+    targetPort: 4317
+  - name: otlp-http
+    port: 4318
+    targetPort: 4318
+  - name: metrics
+    port: 8889
+    targetPort: 8889
+  - name: health
+    port: 13133
+    targetPort: 13133

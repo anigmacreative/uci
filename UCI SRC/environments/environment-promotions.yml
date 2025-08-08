@@ -1,0 +1,453 @@
+# Environment promotion workflow and GitOps configuration
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: creative-identity-platform-gitops
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: creative-identity-platform
+    environment: multi-environment
+spec:
+  project: creative-identity
+  source:
+    repoURL: https://github.com/creative-identity-platform/infrastructure
+    targetRevision: main
+    path: environments
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+    - CreateNamespace=true
+    - PrunePropagationPolicy=foreground
+    - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+---
+# Development environment application
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: creative-identity-development
+  namespace: argocd
+  labels:
+    environment: development
+    app: creative-identity-platform
+spec:
+  project: creative-identity
+  source:
+    repoURL: https://github.com/creative-identity-platform/infrastructure
+    targetRevision: develop
+    path: environments/development
+    helm:
+      valueFiles:
+      - values-development.yaml
+      parameters:
+      - name: image.tag
+        value: "develop-latest"
+      - name: replicas
+        value: "1"
+      - name: resources.requests.cpu
+        value: "100m"
+      - name: resources.requests.memory
+        value: "256Mi"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: creative-identity-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+
+---
+# Staging environment application
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: creative-identity-staging
+  namespace: argocd
+  labels:
+    environment: staging
+    app: creative-identity-platform
+spec:
+  project: creative-identity
+  source:
+    repoURL: https://github.com/creative-identity-platform/infrastructure
+    targetRevision: staging
+    path: environments/staging
+    helm:
+      valueFiles:
+      - values-staging.yaml
+      parameters:
+      - name: image.tag
+        value: "staging-{{.Values.global.version}}"
+      - name: replicas
+        value: "3"
+      - name: resources.requests.cpu
+        value: "200m"
+      - name: resources.requests.memory
+        value: "512Mi"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: creative-identity-staging
+  syncPolicy:
+    syncOptions:
+    - CreateNamespace=true
+    # Manual sync for staging - requires approval
+    
+---
+# Production environment application
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: creative-identity-production
+  namespace: argocd
+  labels:
+    environment: production
+    app: creative-identity-platform
+    critical: "true"
+spec:
+  project: creative-identity
+  source:
+    repoURL: https://github.com/creative-identity-platform/infrastructure
+    targetRevision: main
+    path: environments/production
+    helm:
+      valueFiles:
+      - values-production.yaml
+      parameters:
+      - name: image.tag
+        value: "{{.Values.global.version}}"
+      - name: replicas
+        value: "10"
+      - name: resources.requests.cpu
+        value: "500m"
+      - name: resources.requests.memory
+        value: "1Gi"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: creative-identity-production
+  syncPolicy:
+    syncOptions:
+    - CreateNamespace=true
+    # Manual sync only for production
+    # Requires multiple approvals and change control
+
+---
+# Environment promotion pipeline
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promotion-workflow
+  namespace: argocd
+data:
+  # Promotion stages and requirements
+  promotion-rules.yaml: |
+    # Creative Identity Platform promotion rules
+    stages:
+      - name: development
+        auto_promote: true
+        source_branch: develop
+        target_environment: creative-identity-dev
+        requirements:
+          - build_success: true
+          - unit_tests: true
+          - lint_checks: true
+        
+      - name: staging
+        auto_promote: false # Manual promotion
+        source_environment: creative-identity-dev
+        target_environment: creative-identity-staging
+        requirements:
+          - development_tests_pass: true
+          - integration_tests: true
+          - security_scan: true
+          - performance_baseline: true
+          - approval_required: true
+          - approvers: ["team-lead", "product-owner"]
+          
+      - name: production
+        auto_promote: false # Strict manual promotion
+        source_environment: creative-identity-staging
+        target_environment: creative-identity-production
+        requirements:
+          - staging_tests_pass: true
+          - e2e_tests: true
+          - load_tests: true
+          - security_audit: true
+          - compliance_validation: true
+          - disaster_recovery_test: true
+          - multiple_approvals: true
+          - approvers: ["senior-engineer", "tech-lead", "product-owner", "security-lead"]
+          - business_stakeholder_approval: true
+          - change_control_board: true
+          - scheduled_deployment_window: true
+
+  # Rollback procedures
+  rollback-procedures.yaml: |
+    # Automated rollback triggers and procedures
+    rollback_triggers:
+      - error_rate_threshold: 0.05 # 5%
+        duration: "2m"
+        auto_rollback: true
+        environments: ["production", "staging"]
+        
+      - response_time_p95_threshold: 5000 # 5 seconds
+        duration: "3m"
+        auto_rollback: true
+        environments: ["production"]
+        
+      - availability_threshold: 0.99 # 99%
+        duration: "1m"
+        auto_rollback: true
+        environments: ["production"]
+    
+    rollback_procedures:
+      production:
+        - stop_traffic: true
+          method: "blue_green_switch"
+        - validate_previous_version: true
+        - database_rollback: "conditional" # Only if schema changes
+        - notification_channels: ["slack", "pagerduty", "email"]
+        - post_rollback_validation: true
+        - incident_creation: true
+      
+      staging:
+        - stop_traffic: false
+        - validate_previous_version: true
+        - notification_channels: ["slack"]
+
+---
+# Environment-specific secrets management
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: creative-identity-secrets
+spec:
+  provider:
+    vault:
+      server: "https://vault.creative-identity.platform"
+      path: "secret"
+      version: "v2"
+      auth:
+        kubernetes:
+          mountPath: "kubernetes"
+          role: "creative-identity-secrets"
+
+---
+# Development secrets
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: development-secrets
+  namespace: creative-identity-dev
+spec:
+  refreshInterval: 24h
+  secretStoreRef:
+    name: creative-identity-secrets
+    kind: ClusterSecretStore
+  target:
+    name: application-secrets
+    creationPolicy: Owner
+  data:
+  - secretKey: JWT_SECRET
+    remoteRef:
+      key: creative-identity/development
+      property: jwt_secret
+  - secretKey: DATABASE_URL
+    remoteRef:
+      key: creative-identity/development
+      property: database_url
+  - secretKey: STRIPE_SECRET_KEY
+    remoteRef:
+      key: creative-identity/development
+      property: stripe_secret_key
+
+---
+# Staging secrets
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: staging-secrets
+  namespace: creative-identity-staging
+spec:
+  refreshInterval: 12h
+  secretStoreRef:
+    name: creative-identity-secrets
+    kind: ClusterSecretStore
+  target:
+    name: application-secrets
+    creationPolicy: Owner
+  data:
+  - secretKey: JWT_SECRET
+    remoteRef:
+      key: creative-identity/staging
+      property: jwt_secret
+  - secretKey: DATABASE_URL
+    remoteRef:
+      key: creative-identity/staging
+      property: database_url
+  - secretKey: STRIPE_SECRET_KEY
+    remoteRef:
+      key: creative-identity/staging
+      property: stripe_secret_key
+
+---
+# Production secrets (highest security)
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: production-secrets
+  namespace: creative-identity-production
+spec:
+  refreshInterval: 6h
+  secretStoreRef:
+    name: creative-identity-secrets
+    kind: ClusterSecretStore
+  target:
+    name: application-secrets
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        JWT_SECRET: "{{ .jwt_secret | b64enc }}"
+        DATABASE_URL: "{{ .database_url | b64enc }}"
+        STRIPE_SECRET_KEY: "{{ .stripe_secret_key | b64enc }}"
+        BIOMETRIC_KEY: "{{ .biometric_key | b64enc }}"
+        BLOCKCHAIN_PRIVATE_KEY: "{{ .blockchain_private_key | b64enc }}"
+  data:
+  - secretKey: jwt_secret
+    remoteRef:
+      key: creative-identity/production
+      property: jwt_secret
+  - secretKey: database_url
+    remoteRef:
+      key: creative-identity/production
+      property: database_url
+  - secretKey: stripe_secret_key
+    remoteRef:
+      key: creative-identity/production
+      property: stripe_secret_key
+  - secretKey: biometric_key
+    remoteRef:
+      key: creative-identity/production
+      property: biometric_encryption_key
+  - secretKey: blockchain_private_key
+    remoteRef:
+      key: creative-identity/production
+      property: polygon_private_key
+
+---
+# Cross-environment monitoring and comparison
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cross-environment-monitoring
+  namespace: monitoring
+data:
+  environment-comparison-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "Creative Identity Platform - Environment Comparison",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Request Rate by Environment",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "sum by (environment) (rate(http_requests_total{namespace=~\"creative-identity-.*\"}[5m]))",
+                "legendFormat": "{{environment}}"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "Error Rate by Environment",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "sum by (environment) (rate(http_requests_total{namespace=~\"creative-identity-.*\",status=~\"5..\"}[5m])) / sum by (environment) (rate(http_requests_total{namespace=~\"creative-identity-.*\"}[5m]))",
+                "legendFormat": "{{environment}}"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Response Time P95 by Environment",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, sum by (environment, le) (rate(http_request_duration_seconds_bucket{namespace=~\"creative-identity-.*\"}[5m])))",
+                "legendFormat": "{{environment}}"
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+---
+# Environment health checks
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: environment-health-check
+  namespace: monitoring
+spec:
+  schedule: "*/5 * * * *" # Every 5 minutes
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: environment-monitor
+          restartPolicy: OnFailure
+          containers:
+          - name: health-checker
+            image: creative-identity/health-checker:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              # Check all environments
+              environments="creative-identity-dev creative-identity-staging creative-identity-production"
+              
+              for env in $environments; do
+                echo "Checking environment: $env"
+                
+                # Check if services are running
+                kubectl get pods -n $env --field-selector=status.phase!=Running > /tmp/unhealthy-pods-$env.txt
+                
+                # Check service endpoints
+                kubectl get endpoints -n $env -o json | jq -r '.items[] | select(.subsets | length == 0) | .metadata.name' > /tmp/no-endpoints-$env.txt
+                
+                # Check HPA status
+                kubectl get hpa -n $env -o json | jq -r '.items[] | select(.status.currentReplicas < .spec.minReplicas) | .metadata.name' > /tmp/under-replicated-$env.txt
+                
+                # Report issues
+                if [ -s /tmp/unhealthy-pods-$env.txt ] || [ -s /tmp/no-endpoints-$env.txt ] || [ -s /tmp/under-replicated-$env.txt ]; then
+                  echo "Issues found in environment $env"
+                  curl -X POST "$SLACK_WEBHOOK_URL" -H 'Content-Type: application/json' -d '{
+                    "text": "Health check issues in environment '$env'",
+                    "channel": "#platform-health"
+                  }'
+                fi
+              done
+            env:
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: monitoring-secrets
+                  key: slack-webhook

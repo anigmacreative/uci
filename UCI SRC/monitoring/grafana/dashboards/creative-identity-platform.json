@@ -1,0 +1,409 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Creative Identity Platform - Overview",
+    "tags": ["creative-identity", "platform", "overview"],
+    "style": "dark",
+    "timezone": "UTC",
+    "refresh": "30s",
+    "schemaVersion": 27,
+    "version": 1,
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "templating": {
+      "list": [
+        {
+          "name": "environment",
+          "type": "query",
+          "query": "label_values(environment)",
+          "current": {
+            "value": "development",
+            "text": "development"
+          },
+          "options": [],
+          "refresh": 1,
+          "includeAll": false,
+          "multi": false
+        },
+        {
+          "name": "instance",
+          "type": "query",
+          "query": "label_values(up{environment=\"$environment\"}, instance)",
+          "current": {
+            "value": "All",
+            "text": "All"
+          },
+          "options": [],
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Platform Health Overview",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(up{environment=\"$environment\"})",
+            "legendFormat": "Services Up",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 5},
+                {"color": "green", "value": 8}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Daily Active Users",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+        "targets": [
+          {
+            "expr": "creative_identity:daily_active_users",
+            "legendFormat": "DAU",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "value"},
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 5000},
+                {"color": "green", "value": 10000}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Identity Registrations Rate",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "creative_identity:identity_creation_rate",
+            "legendFormat": "Registrations/sec",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "color": {"mode": "value"}
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Platform Success Rate",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+        "targets": [
+          {
+            "expr": "avg(creative_identity:identity_creation_success_rate) * 100",
+            "legendFormat": "Success Rate %",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 90},
+                {"color": "green", "value": 95}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "HTTP Request Rate",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+        "targets": [
+          {
+            "expr": "sum(creative_identity:http_request_rate) by (instance)",
+            "legendFormat": "{{instance}}",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Requests/sec",
+            "min": 0
+          },
+          {}
+        ],
+        "xAxis": {
+          "show": true
+        },
+        "legend": {
+          "show": true,
+          "values": true,
+          "current": true,
+          "avg": true,
+          "max": true
+        }
+      },
+      {
+        "id": 6,
+        "title": "Response Time Percentiles",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+        "targets": [
+          {
+            "expr": "creative_identity:http_request_duration_p50",
+            "legendFormat": "p50",
+            "refId": "A"
+          },
+          {
+            "expr": "creative_identity:http_request_duration_p95",
+            "legendFormat": "p95",
+            "refId": "B"
+          },
+          {
+            "expr": "creative_identity:http_request_duration_p99",
+            "legendFormat": "p99",
+            "refId": "C"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Seconds",
+            "min": 0
+          },
+          {}
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Identity System Performance",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+        "targets": [
+          {
+            "expr": "creative_identity:identity_creation_rate",
+            "legendFormat": "Creation Rate",
+            "refId": "A"
+          },
+          {
+            "expr": "creative_identity:biometric_verification_duration_p95",
+            "legendFormat": "Biometric Verification p95",
+            "refId": "B"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Rate/Duration",
+            "min": 0
+          },
+          {}
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Platform Integration Status",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+        "targets": [
+          {
+            "expr": "creative_identity:platform_sync_success_rate",
+            "legendFormat": "{{platform}} Success Rate",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Success Rate",
+            "min": 0,
+            "max": 1
+          },
+          {}
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Content Verification Metrics",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+        "targets": [
+          {
+            "expr": "creative_identity:content_verification_rate",
+            "legendFormat": "Verification Rate",
+            "refId": "A"
+          },
+          {
+            "expr": "creative_identity:authenticity_score_avg",
+            "legendFormat": "Average Authenticity Score",
+            "refId": "B"
+          },
+          {
+            "expr": "creative_identity:deepfake_detection_rate * 100",
+            "legendFormat": "Deepfake Detection Rate %",
+            "refId": "C"
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Blockchain Performance",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+        "targets": [
+          {
+            "expr": "creative_identity:blockchain_transaction_rate",
+            "legendFormat": "{{network}} - {{type}}",
+            "refId": "A"
+          },
+          {
+            "expr": "creative_identity:avg_gas_price_gwei",
+            "legendFormat": "Gas Price ({{network}})",
+            "refId": "B"
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Real-time Collaboration",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+        "targets": [
+          {
+            "expr": "creative_identity:websocket_connections_active",
+            "legendFormat": "Active WebSocket Connections",
+            "refId": "A"
+          },
+          {
+            "expr": "creative_identity:collaboration_sessions_active",
+            "legendFormat": "Active Collaboration Sessions",
+            "refId": "B"
+          },
+          {
+            "expr": "creative_identity:collaboration_latency_p95 * 1000",
+            "legendFormat": "Collaboration Latency p95 (ms)",
+            "refId": "C"
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "Creator Economy Metrics",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+        "targets": [
+          {
+            "expr": "creative_identity:revenue_rate_usd",
+            "legendFormat": "Revenue Rate (USD/hour)",
+            "refId": "A"
+          },
+          {
+            "expr": "creative_identity:monetization_conversion_rate * 100",
+            "legendFormat": "Monetization Conversion Rate %",
+            "refId": "B"
+          },
+          {
+            "expr": "creative_identity:avg_creator_earnings_usd",
+            "legendFormat": "Avg Creator Earnings ({{tier}}, {{region}})",
+            "refId": "C"
+          }
+        ]
+      },
+      {
+        "id": 13,
+        "title": "System Resources",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 36},
+        "targets": [
+          {
+            "expr": "creative_identity:cpu_usage_percent",
+            "legendFormat": "CPU Usage % ({{instance}})",
+            "refId": "A"
+          },
+          {
+            "expr": "creative_identity:memory_usage_percent",
+            "legendFormat": "Memory Usage % ({{instance}})",
+            "refId": "B"
+          },
+          {
+            "expr": "creative_identity:disk_usage_percent",
+            "legendFormat": "Disk Usage % ({{instance}})",
+            "refId": "C"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Percentage",
+            "min": 0,
+            "max": 100
+          },
+          {}
+        ]
+      },
+      {
+        "id": 14,
+        "title": "Viral Growth Indicators",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 44},
+        "targets": [
+          {
+            "expr": "creative_identity:viral_coefficient",
+            "legendFormat": "Viral Coefficient",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(new_user_registrations[5m])",
+            "legendFormat": "Registration Rate (per minute)",
+            "refId": "B"
+          },
+          {
+            "expr": "rate(content_shares_total[5m])",
+            "legendFormat": "Content Share Rate",
+            "refId": "C"
+          },
+          {
+            "expr": "creative_identity:creator_ecosystem_health_score",
+            "legendFormat": "Ecosystem Health Score",
+            "refId": "D"
+          }
+        ]
+      }
+    ],
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "deployment_timestamp",
+          "iconColor": "blue",
+          "titleFormat": "Deployment"
+        }
+      ]
+    }
+  }
+}

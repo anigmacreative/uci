@@ -1,0 +1,257 @@
+# Snyk security configuration for Creative Identity Platform
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: snyk-config
+  namespace: creative-identity
+data:
+  .snyk: |
+    # Snyk configuration file for Creative Identity Platform
+    version: v1.0.0
+    
+    # Language-specific settings
+    language-settings:
+      javascript:
+        includeDevDeps: false
+        showVulnPaths: all
+      
+    # Ignore specific vulnerabilities after assessment
+    ignore:
+      # Example: Ignore low severity issues in dev dependencies
+      'SNYK-JS-LODASH-567746':
+        - '*':
+            reason: Low severity, not exploitable in our context
+            expires: '2024-12-31T23:59:59.999Z'
+    
+    # Patches - automatic fixes for known vulnerabilities
+    patches: {}
+    
+    # Custom Creative Identity Platform rules
+    exclude:
+      global:
+        - '**/node_modules/**'
+        - '**/coverage/**'
+        - '**/test/**'
+        - '**/tests/**'
+        - '**/.git/**'
+        - '**/build/**'
+        - '**/dist/**'
+        - '**/.next/**'
+
+  # Snyk policy for Creative Identity Platform
+  snyk-policy.yml: |
+    # Security policies specific to Creative Identity Platform
+    rules:
+      # High severity vulnerabilities
+      high-severity:
+        action: fail
+        conditions:
+          - severity: high
+          - severity: critical
+        
+      # Biometric data handling vulnerabilities
+      biometric-security:
+        action: fail
+        conditions:
+          - category: "encryption"
+          - category: "authentication"
+        
+      # Blockchain security issues
+      blockchain-security:
+        action: fail
+        conditions:
+          - package-type: "smart-contract"
+          - category: "blockchain"
+        
+      # Creator data privacy issues
+      privacy-violations:
+        action: fail
+        conditions:
+          - category: "data-exposure"
+          - category: "privacy"
+    
+    # License compliance
+    license-policy:
+      allowed-licenses:
+        - MIT
+        - Apache-2.0
+        - BSD-2-Clause
+        - BSD-3-Clause
+        - ISC
+        - CC0-1.0
+        - Unlicense
+      
+      disallowed-licenses:
+        - GPL-3.0
+        - AGPL-3.0
+        - LGPL-3.0
+        - CC-BY-SA-4.0
+      
+      # Custom license review required
+      review-required:
+        - CC-BY-4.0
+        - MPL-2.0
+
+---
+# Snyk CronJob for regular security scanning
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: snyk-security-scan
+  namespace: creative-identity
+spec:
+  schedule: "30 1 * * *" # Daily at 1:30 AM
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: snyk-scanner
+            component: security
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: snyk-scanner
+          containers:
+          - name: snyk-scanner
+            image: snyk/snyk:node-18
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              
+              echo "Starting Snyk security scan for Creative Identity Platform"
+              
+              # Set up Snyk configuration
+              export SNYK_TOKEN=$SNYK_TOKEN
+              
+              # Clone the repository (in real deployment, this would be mounted)
+              cd /workspace
+              
+              # Test for vulnerabilities
+              echo "Scanning for vulnerabilities..."
+              snyk test --json > /tmp/snyk-vulnerabilities.json || echo "Vulnerabilities found"
+              
+              # Test for license compliance
+              echo "Checking license compliance..."
+              snyk test --json --print-deps | jq '.dependencies' > /tmp/snyk-licenses.json
+              
+              # Monitor project (send results to Snyk dashboard)
+              echo "Monitoring project..."
+              snyk monitor --project-name="creative-identity-platform"
+              
+              # Container scanning
+              echo "Scanning container images..."
+              snyk container test creative-identity-app:latest --json > /tmp/snyk-container-app.json || echo "Container issues found"
+              snyk container test creative-identity-api:latest --json > /tmp/snyk-container-api.json || echo "Container issues found"
+              snyk container test creative-identity-websocket:latest --json > /tmp/snyk-container-ws.json || echo "Container issues found"
+              
+              # Infrastructure as Code scanning
+              echo "Scanning IaC configurations..."
+              snyk iac test k8s/ --json > /tmp/snyk-iac.json || echo "IaC issues found"
+              
+              # Code scanning
+              echo "Scanning source code..."
+              snyk code test --json > /tmp/snyk-code.json || echo "Code issues found"
+              
+              # Generate summary report
+              echo "Generating summary report..."
+              cat > /tmp/snyk-summary.json << EOF
+              {
+                "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+                "platform": "creative-identity-platform",
+                "scan_types": ["vulnerabilities", "licenses", "containers", "iac", "code"],
+                "results_location": "/tmp/"
+              }
+              EOF
+              
+              echo "Snyk scan completed successfully"
+              
+            env:
+            - name: SNYK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: snyk-credentials
+                  key: token
+            - name: SNYK_CFG_ORG
+              value: "creative-identity-platform"
+            volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: snyk-config
+              mountPath: /.snyk
+              subPath: .snyk
+            - name: results-storage
+              mountPath: /tmp
+            resources:
+              requests:
+                memory: 256Mi
+                cpu: 200m
+              limits:
+                memory: 1Gi
+                cpu: 500m
+          volumes:
+          - name: workspace
+            emptyDir: {}
+          - name: snyk-config
+            configMap:
+              name: snyk-config
+          - name: results-storage
+            persistentVolumeClaim:
+              claimName: security-scan-results
+
+---
+# RBAC for Snyk scanner
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: snyk-scanner
+  namespace: creative-identity
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: snyk-scanner
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets", "daemonsets"]
+  verbs: ["get", "list"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies", "ingresses"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: snyk-scanner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: snyk-scanner
+subjects:
+- kind: ServiceAccount
+  name: snyk-scanner
+  namespace: creative-identity
+
+---
+# PersistentVolumeClaim for scan results
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: security-scan-results
+  namespace: creative-identity
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 10Gi

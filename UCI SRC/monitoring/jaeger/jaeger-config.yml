@@ -1,0 +1,259 @@
+# Jaeger distributed tracing configuration for Creative Identity Platform
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jaeger-config
+  namespace: creative-identity
+data:
+  jaeger.yaml: |
+    # Jaeger configuration for distributed tracing
+    
+    # Storage backend configuration
+    storage:
+      type: elasticsearch
+      options:
+        es:
+          server-urls: http://elasticsearch:9200
+          index-prefix: jaeger
+          create-index-templates: true
+          version: 8
+          num-shards: 5
+          num-replicas: 1
+          timeout: 0s
+          sniffer: false
+          max-span-age: 168h  # 7 days
+          log-level: error
+          username: ""
+          password: ""
+          tls:
+            enabled: false
+
+    # Sampling strategies
+    sampling:
+      default_strategy:
+        type: probabilistic
+        param: 0.1  # Sample 10% of traces
+      
+      per_service_strategies:
+        - service: "creative-identity-app"
+          type: probabilistic
+          param: 0.5  # Sample 50% of main app traces
+          
+        - service: "creative-identity-api"
+          type: probabilistic
+          param: 0.3  # Sample 30% of API traces
+          
+        - service: "biometric-verification"
+          type: probabilistic
+          param: 1.0  # Sample 100% of biometric traces (critical)
+          
+        - service: "blockchain-service"
+          type: probabilistic
+          param: 0.8  # Sample 80% of blockchain traces
+          
+        - service: "content-verification"
+          type: probabilistic
+          param: 0.6  # Sample 60% of content verification
+          
+        - service: "websocket-service"
+          type: rate_limiting
+          param: 100  # Max 100 traces per second for WebSocket
+          
+        - service: "platform-sync"
+          type: probabilistic
+          param: 0.2  # Sample 20% of platform sync operations
+          
+      per_operation_strategies:
+        - service: "creative-identity-api"
+          operation: "/api/identity/register"
+          type: probabilistic
+          param: 1.0  # Sample 100% of identity registrations
+          
+        - service: "creative-identity-api"
+          operation: "/api/content/verify"
+          type: probabilistic
+          param: 0.8  # Sample 80% of content verifications
+          
+        - service: "creative-identity-api"
+          operation: "/api/platforms/sync"
+          type: rate_limiting
+          param: 50  # Max 50 traces per second
+          
+        - service: "websocket-service"
+          operation: "collaboration-message"
+          type: rate_limiting
+          param: 20  # Limit WebSocket message tracing
+
+    # Metrics configuration
+    metrics:
+      backend: prometheus
+      http_route: /metrics
+      namespace: jaeger
+      buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+
+    # Query service configuration
+    query:
+      additional-headers:
+        - "Access-Control-Allow-Origin: *"
+        - "Access-Control-Allow-Headers: Content-Type, Authorization"
+      ui-config: |
+        {
+          "archiveEnabled": true,
+          "dependencies": {
+            "menuEnabled": true
+          },
+          "tracking": {
+            "gaID": "",
+            "trackErrors": false
+          },
+          "menu": [
+            {
+              "label": "Creative Identity Docs",
+              "url": "https://docs.creativeidentity.platform",
+              "newTab": true
+            },
+            {
+              "label": "Grafana Dashboards", 
+              "url": "http://grafana:3000",
+              "newTab": true
+            }
+          ],
+          "linkPatterns": [
+            {
+              "type": "logs",
+              "key": "user_id",
+              "url": "http://kibana:5601/app/discover#/?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:now-1h,to:now))&_a=(columns:!(_source),filters:!((meta:(alias:!n,disabled:!f,index:'*',key:user_id,negate:!f,params:(query:'#{user_id}'),type:phrase,value:'#{user_id}'),query:(match:(user_id:(query:'#{user_id}',type:phrase))))),index:'*',interval:auto,query:(language:kuery,query:''),sort:!(!('@timestamp',desc)))",
+              "text": "View user logs in Kibana"
+            },
+            {
+              "type": "metrics",
+              "key": "identity_id", 
+              "url": "http://grafana:3000/d/creative-identity/creative-identity-platform?var-identity_id=#{identity_id}&from=#{startTime}&to=#{endTime}",
+              "text": "View identity metrics in Grafana"
+            }
+          ]
+        }
+
+---
+# Jaeger Operator configuration
+apiVersion: jaegertracing.io/v1
+kind: Jaeger
+metadata:
+  name: creative-identity-jaeger
+  namespace: creative-identity
+spec:
+  strategy: production
+  
+  storage:
+    type: elasticsearch
+    elasticsearch:
+      nodeCount: 3
+      storage:
+        size: 50Gi
+        storageClassName: fast-ssd
+      redundancyPolicy: SingleRedundancy
+      resources:
+        requests:
+          memory: 2Gi
+          cpu: 500m
+        limits:
+          memory: 4Gi
+          cpu: 2
+
+  collector:
+    replicas: 3
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 200m
+      limits:
+        memory: 1Gi
+        cpu: 1
+    config: |
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:14250
+            http:
+              endpoint: 0.0.0.0:14268
+        jaeger:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:14250
+            thrift_http:
+              endpoint: 0.0.0.0:14268
+            thrift_compact:
+              endpoint: 0.0.0.0:14267
+            thrift_binary:
+              endpoint: 0.0.0.0:14267
+        zipkin:
+          endpoint: 0.0.0.0:9411
+
+      processors:
+        batch:
+          send_batch_size: 1024
+          timeout: 1s
+        
+        # Custom processor for Creative Identity Platform
+        attributes:
+          actions:
+            - key: platform
+              value: creative-identity
+              action: insert
+            - key: environment
+              from_attribute: deployment.environment
+              action: insert
+
+        # Resource detection
+        resource:
+          detectors: [env, system, docker]
+
+      exporters:
+        jaeger:
+          endpoint: jaeger-collector:14250
+          tls:
+            insecure: true
+        
+        # Also export to Prometheus for metrics
+        prometheus:
+          endpoint: 0.0.0.0:8889
+
+      service:
+        pipelines:
+          traces:
+            receivers: [otlp, jaeger, zipkin]
+            processors: [resource, attributes, batch]
+            exporters: [jaeger]
+          metrics:
+            receivers: [otlp]
+            processors: [resource, batch]
+            exporters: [prometheus]
+
+  query:
+    replicas: 2
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 100m
+      limits:
+        memory: 512Mi
+        cpu: 500m
+    
+  agent:
+    strategy: DaemonSet
+    resources:
+      requests:
+        memory: 128Mi
+        cpu: 50m
+      limits:
+        memory: 256Mi
+        cpu: 200m
+
+  ui:
+    options:
+      dependencies:
+        menuEnabled: true
+      tracking:
+        gaID: ""
+        trackErrors: false

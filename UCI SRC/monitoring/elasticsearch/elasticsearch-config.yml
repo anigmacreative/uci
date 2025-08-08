@@ -1,0 +1,463 @@
+# Elasticsearch configuration for Creative Identity Platform logging
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elasticsearch-config
+  namespace: creative-identity
+data:
+  elasticsearch.yml: |
+    # Elasticsearch configuration for Creative Identity Platform
+    cluster.name: creative-identity-logs
+    node.name: ${HOSTNAME}
+    node.master: true
+    node.data: true
+    node.ingest: true
+
+    # Network settings
+    network.host: 0.0.0.0
+    http.port: 9200
+    transport.port: 9300
+
+    # Discovery settings for single node (development)
+    discovery.type: single-node
+
+    # Security settings (disabled for development)
+    xpack.security.enabled: false
+    xpack.security.enrollment.enabled: false
+    xpack.security.http.ssl.enabled: false
+    xpack.security.transport.ssl.enabled: false
+
+    # Memory settings
+    bootstrap.memory_lock: true
+
+    # Index settings for Creative Identity Platform
+    index.number_of_shards: 1
+    index.number_of_replicas: 0
+    index.refresh_interval: 5s
+
+    # Logging configuration
+    logger.level: INFO
+    logger.org.elasticsearch: WARN
+    logger.deprecation: ERROR
+
+  # Index template for Creative Identity logs
+  index-template.json: |
+    {
+      "index_patterns": ["creative-identity-logs-*"],
+      "template": {
+        "settings": {
+          "number_of_shards": 2,
+          "number_of_replicas": 1,
+          "index.refresh_interval": "5s",
+          "index.max_result_window": 50000,
+          "analysis": {
+            "analyzer": {
+              "creative_identity_analyzer": {
+                "tokenizer": "standard",
+                "filter": ["lowercase", "stop"]
+              }
+            }
+          }
+        },
+        "mappings": {
+          "properties": {
+            "@timestamp": {
+              "type": "date",
+              "format": "strict_date_optional_time||epoch_millis"
+            },
+            "level": {
+              "type": "keyword"
+            },
+            "message": {
+              "type": "text",
+              "analyzer": "creative_identity_analyzer"
+            },
+            "service": {
+              "type": "keyword"
+            },
+            "component": {
+              "type": "keyword"
+            },
+            "environment": {
+              "type": "keyword"
+            },
+            "trace_id": {
+              "type": "keyword"
+            },
+            "span_id": {
+              "type": "keyword"
+            },
+            "user_id": {
+              "type": "keyword"
+            },
+            "identity_id": {
+              "type": "keyword"
+            },
+            "platform": {
+              "type": "keyword"
+            },
+            "operation": {
+              "type": "keyword"
+            },
+            "duration_ms": {
+              "type": "long"
+            },
+            "status_code": {
+              "type": "integer"
+            },
+            "error": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "type": "text"
+                },
+                "stack": {
+                  "type": "text"
+                },
+                "code": {
+                  "type": "keyword"
+                }
+              }
+            },
+            "request": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "type": "keyword"
+                },
+                "url": {
+                  "type": "keyword"
+                },
+                "user_agent": {
+                  "type": "text"
+                },
+                "ip": {
+                  "type": "ip"
+                }
+              }
+            },
+            "response": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "integer"
+                },
+                "size_bytes": {
+                  "type": "long"
+                }
+              }
+            },
+            "biometric": {
+              "type": "object",
+              "properties": {
+                "verification_type": {
+                  "type": "keyword"
+                },
+                "confidence_score": {
+                  "type": "float"
+                },
+                "device_type": {
+                  "type": "keyword"
+                },
+                "spoofing_detected": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "blockchain": {
+              "type": "object",
+              "properties": {
+                "network": {
+                  "type": "keyword"
+                },
+                "transaction_hash": {
+                  "type": "keyword"
+                },
+                "gas_used": {
+                  "type": "long"
+                },
+                "gas_price": {
+                  "type": "long"
+                },
+                "block_number": {
+                  "type": "long"
+                }
+              }
+            },
+            "content": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "keyword"
+                },
+                "size_bytes": {
+                  "type": "long"
+                },
+                "authenticity_score": {
+                  "type": "float"
+                },
+                "platform_origin": {
+                  "type": "keyword"
+                },
+                "verification_status": {
+                  "type": "keyword"
+                }
+              }
+            },
+            "collaboration": {
+              "type": "object",
+              "properties": {
+                "session_id": {
+                  "type": "keyword"
+                },
+                "participant_count": {
+                  "type": "integer"
+                },
+                "message_type": {
+                  "type": "keyword"
+                },
+                "room_id": {
+                  "type": "keyword"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+  # Ingest pipeline for log processing
+  ingest-pipeline.json: |
+    {
+      "processors": [
+        {
+          "set": {
+            "field": "@timestamp",
+            "value": "{{_ingest.timestamp}}"
+          }
+        },
+        {
+          "grok": {
+            "field": "message",
+            "patterns": [
+              "\\[%{TIMESTAMP_ISO8601:timestamp}\\] %{LOGLEVEL:level} %{GREEDYDATA:log_message}"
+            ],
+            "ignore_failure": true
+          }
+        },
+        {
+          "date": {
+            "field": "timestamp",
+            "formats": ["ISO8601"],
+            "ignore_failure": true
+          }
+        },
+        {
+          "remove": {
+            "field": "timestamp",
+            "ignore_failure": true
+          }
+        },
+        {
+          "json": {
+            "field": "log_message",
+            "target_field": "parsed",
+            "ignore_failure": true
+          }
+        },
+        {
+          "script": {
+            "lang": "painless",
+            "source": """
+              if (ctx.parsed != null) {
+                for (entry in ctx.parsed.entrySet()) {
+                  ctx[entry.getKey()] = entry.getValue();
+                }
+                ctx.remove('parsed');
+              }
+            """,
+            "ignore_failure": true
+          }
+        },
+        {
+          "geoip": {
+            "field": "request.ip",
+            "target_field": "geoip",
+            "ignore_failure": true
+          }
+        },
+        {
+          "user_agent": {
+            "field": "request.user_agent",
+            "target_field": "user_agent_parsed",
+            "ignore_failure": true
+          }
+        }
+      ]
+    }
+
+---
+# Index Lifecycle Management policy
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elasticsearch-ilm-policy
+  namespace: creative-identity
+data:
+  creative-identity-logs-policy.json: |
+    {
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "rollover": {
+                "max_size": "10GB",
+                "max_age": "1d",
+                "max_docs": 10000000
+              },
+              "set_priority": {
+                "priority": 100
+              }
+            }
+          },
+          "warm": {
+            "min_age": "7d",
+            "actions": {
+              "allocate": {
+                "number_of_replicas": 0
+              },
+              "forcemerge": {
+                "max_num_segments": 1
+              },
+              "set_priority": {
+                "priority": 50
+              }
+            }
+          },
+          "cold": {
+            "min_age": "30d",
+            "actions": {
+              "allocate": {
+                "number_of_replicas": 0
+              },
+              "set_priority": {
+                "priority": 0
+              }
+            }
+          },
+          "delete": {
+            "min_age": "90d"
+          }
+        }
+      }
+    }
+
+---
+# Elasticsearch deployment with persistent storage
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: creative-identity
+  labels:
+    app: elasticsearch
+    component: logging
+spec:
+  serviceName: elasticsearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+        component: logging
+    spec:
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+      - name: increase-vm-max-map
+        image: busybox
+        command: ["sysctl", "-w", "vm.max_map_count=262144"]
+        securityContext:
+          privileged: true
+      - name: increase-fd-ulimit
+        image: busybox
+        command: ["sh", "-c", "ulimit -n 65536"]
+        securityContext:
+          privileged: true
+      containers:
+      - name: elasticsearch
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: 1
+          limits:
+            memory: 4Gi
+            cpu: 2
+        ports:
+        - containerPort: 9200
+          name: http
+        - containerPort: 9300
+          name: transport
+        env:
+        - name: node.name
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: ES_JAVA_OPTS
+          value: "-Xms2g -Xmx2g"
+        volumeMounts:
+        - name: elasticsearch-data
+          mountPath: /usr/share/elasticsearch/data
+        - name: elasticsearch-config
+          mountPath: /usr/share/elasticsearch/config/elasticsearch.yml
+          subPath: elasticsearch.yml
+        livenessProbe:
+          httpGet:
+            path: /_cluster/health
+            port: 9200
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /_cluster/health
+            port: 9200
+          initialDelaySeconds: 30
+          periodSeconds: 5
+      volumes:
+      - name: elasticsearch-config
+        configMap:
+          name: elasticsearch-config
+  volumeClaimTemplates:
+  - metadata:
+      name: elasticsearch-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 100Gi
+
+---
+# Elasticsearch service
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: creative-identity
+  labels:
+    app: elasticsearch
+spec:
+  selector:
+    app: elasticsearch
+  ports:
+  - name: http
+    port: 9200
+    targetPort: 9200
+  - name: transport
+    port: 9300
+    targetPort: 9300

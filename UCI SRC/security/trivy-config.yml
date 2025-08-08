@@ -1,0 +1,313 @@
+# Trivy security scanner configuration for Creative Identity Platform
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trivy-config
+  namespace: creative-identity
+data:
+  trivy.yaml: |
+    # Trivy configuration for comprehensive security scanning
+    
+    # Database configuration
+    db:
+      java-db: true
+      no-progress: false
+      skip-update: false
+      download-java-db-only: false
+      reset: false
+    
+    # Vulnerability scanning
+    vulnerability:
+      type: 
+        - os
+        - library
+      scanners:
+        - vuln
+        - secret
+        - config
+      severity:
+        - UNKNOWN
+        - LOW
+        - MEDIUM
+        - HIGH
+        - CRITICAL
+      ignore-unfixed: false
+    
+    # Secret scanning configuration
+    secret:
+      config-path: /etc/trivy/secret.yaml
+    
+    # Misconfiguration scanning
+    config:
+      file-patterns:
+        dockerfile:
+          - "Dockerfile*"
+          - "dockerfile*"
+        kubernetes:
+          - "*.yaml"
+          - "*.yml"
+        terraform:
+          - "*.tf"
+          - "*.tfvars"
+      policy-paths:
+        - /etc/trivy/policies
+    
+    # Output configuration
+    format: json
+    output: /tmp/trivy-results.json
+    
+    # Cache configuration
+    cache:
+      backend: fs
+      dir: /tmp/trivy-cache
+    
+    # Custom Creative Identity Platform rules
+    ignore:
+      - CVE-2023-EXAMPLE # Example of ignoring specific CVEs after assessment
+    
+    # Skip files and directories
+    skip-files:
+      - "**/.git/**"
+      - "**/node_modules/**"
+      - "**/coverage/**"
+      - "**/test-results/**"
+    
+    skip-dirs:
+      - ".git"
+      - "node_modules"
+      - "coverage"
+      - ".next"
+
+  # Secret scanning patterns specific to Creative Identity Platform
+  secret.yaml: |
+    rules:
+      - id: creative-identity-jwt-secret
+        category: creative-identity
+        title: Creative Identity JWT Secret
+        severity: HIGH
+        regex: 
+          - 'jwt[_-]?secret[_-]?key?\s*[=:]\s*["\']?([a-zA-Z0-9_-]{32,})["\']?'
+        keywords:
+          - jwt_secret
+          - JWT_SECRET
+          - jwt-secret
+      
+      - id: creative-identity-stripe-key
+        category: creative-identity
+        title: Stripe Secret Key
+        severity: CRITICAL
+        regex:
+          - 'sk_(test|live)_[a-zA-Z0-9]{24,}'
+        keywords:
+          - stripe
+          - STRIPE_SECRET_KEY
+      
+      - id: creative-identity-polygon-private-key
+        category: creative-identity
+        title: Polygon Private Key
+        severity: CRITICAL
+        regex:
+          - '0x[a-fA-F0-9]{64}'
+        keywords:
+          - private_key
+          - PRIVATE_KEY
+          - polygon
+      
+      - id: creative-identity-biometric-key
+        category: creative-identity
+        title: Biometric Encryption Key
+        severity: HIGH
+        regex:
+          - 'biometric[_-]?key[_-]?[=:]\s*["\']?([a-zA-Z0-9+/=]{32,})["\']?'
+        keywords:
+          - biometric_key
+          - BIOMETRIC_KEY
+      
+      - id: creative-identity-story-protocol-key
+        category: creative-identity
+        title: Story Protocol API Key
+        severity: HIGH
+        regex:
+          - 'story[_-]?protocol[_-]?key[_-]?[=:]\s*["\']?([a-zA-Z0-9_-]{20,})["\']?'
+        keywords:
+          - story_protocol
+          - STORY_PROTOCOL_KEY
+
+---
+# Custom Trivy policies for Creative Identity Platform
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trivy-policies
+  namespace: creative-identity
+data:
+  # Dockerfile security policies
+  dockerfile.rego: |
+    package builtin.dockerfile.DS026
+    
+    # Ensure Creative Identity Platform containers run as non-root
+    deny[msg] {
+        input[i].Cmd == "user"
+        val := input[i].Value
+        val[j] == "root"
+        msg = "Container should not run as root user for Creative Identity Platform security"
+    }
+    
+    # Check for exposed secrets in ENV statements
+    deny[msg] {
+        input[i].Cmd == "env"
+        val := input[i].Value
+        contains(lower(val[j]), "secret")
+        contains(lower(val[j]), "key")
+        msg = "Environment variables should not contain secrets in Creative Identity Platform"
+    }
+
+  # Kubernetes security policies
+  kubernetes.rego: |
+    package builtin.kubernetes.KSV001
+    
+    # Ensure Creative Identity Platform pods have security context
+    deny[msg] {
+        input.kind == "Pod"
+        not input.spec.securityContext.runAsNonRoot
+        msg = "Creative Identity Platform pods must run as non-root"
+    }
+    
+    # Check for proper resource limits
+    deny[msg] {
+        input.kind == "Deployment"
+        input.metadata.labels.app == "creative-identity"
+        container := input.spec.template.spec.containers[_]
+        not container.resources.limits.memory
+        msg = "Creative Identity Platform containers must have memory limits"
+    }
+
+---
+# Trivy CronJob for regular scanning
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: trivy-security-scan
+  namespace: creative-identity
+spec:
+  schedule: "0 2 * * *" # Daily at 2 AM
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: trivy-scanner
+          containers:
+          - name: trivy-scanner
+            image: aquasec/trivy:0.47.0
+            command:
+            - /bin/sh
+            - -c
+            - |
+              # Scan container images
+              trivy image --config /etc/trivy/trivy.yaml creative-identity-app:latest
+              trivy image --config /etc/trivy/trivy.yaml creative-identity-api:latest
+              trivy image --config /etc/trivy/trivy.yaml creative-identity-websocket:latest
+              
+              # Scan Kubernetes manifests
+              trivy config --config /etc/trivy/trivy.yaml /k8s/
+              
+              # Scan source code
+              trivy fs --config /etc/trivy/trivy.yaml /src/
+              
+              # Upload results to S3 or similar storage
+              # aws s3 cp /tmp/trivy-results.json s3://security-scans/$(date +%Y-%m-%d)/
+            env:
+            - name: TRIVY_DB_REPOSITORY
+              value: "ghcr.io/aquasecurity/trivy-db"
+            - name: TRIVY_JAVA_DB_REPOSITORY  
+              value: "ghcr.io/aquasecurity/trivy-java-db"
+            volumeMounts:
+            - name: trivy-config
+              mountPath: /etc/trivy
+            - name: k8s-manifests
+              mountPath: /k8s
+            - name: source-code
+              mountPath: /src
+            - name: trivy-cache
+              mountPath: /tmp/trivy-cache
+            resources:
+              requests:
+                memory: 512Mi
+                cpu: 200m
+              limits:
+                memory: 2Gi
+                cpu: 1
+          volumes:
+          - name: trivy-config
+            configMap:
+              name: trivy-config
+          - name: trivy-policies
+            configMap:
+              name: trivy-policies
+          - name: k8s-manifests
+            configMap:
+              name: k8s-manifests
+          - name: source-code
+            emptyDir: {}
+          - name: trivy-cache
+            persistentVolumeClaim:
+              claimName: trivy-cache
+
+---
+# Trivy Operator for continuous scanning
+apiVersion: aquasecurity.github.io/v1alpha1
+kind: ClusterComplianceReport
+metadata:
+  name: creative-identity-compliance
+spec:
+  compliance:
+    # NIST Cybersecurity Framework
+    - id: "nist-csf"
+      title: "NIST Cybersecurity Framework"
+      description: "Compliance with NIST CSF for Creative Identity Platform"
+      version: "1.1"
+      controls:
+        - id: "ID.AM-1"
+          name: "Physical devices and systems within the organization are inventoried"
+        - id: "ID.AM-2"
+          name: "Software platforms and applications within the organization are inventoried"
+        - id: "PR.AC-1"
+          name: "Identities and credentials are issued, managed, verified, revoked, and audited"
+        - id: "PR.AC-4"
+          name: "Access permissions and authorizations are managed"
+        - id: "PR.DS-1"
+          name: "Data-at-rest is protected"
+        - id: "PR.DS-2"
+          name: "Data-in-transit is protected"
+    
+    # SOC 2 Type II controls
+    - id: "soc2-type2"
+      title: "SOC 2 Type II Controls"
+      description: "Service Organization Control 2 Type II compliance"
+      version: "2017"
+      controls:
+        - id: "CC6.1"
+          name: "Logical and physical access controls"
+        - id: "CC6.2"
+          name: "System monitoring and threat detection"
+        - id: "CC6.3"
+          name: "Data classification and handling"
+    
+    # Creative Identity Platform specific controls
+    - id: "cip-security"
+      title: "Creative Identity Platform Security Controls"
+      description: "Platform-specific security requirements"
+      version: "1.0"
+      controls:
+        - id: "CIP-AUTH-1"
+          name: "Biometric data encryption at rest and in transit"
+        - id: "CIP-AUTH-2" 
+          name: "Multi-factor authentication for creator accounts"
+        - id: "CIP-CONTENT-1"
+          name: "Content authenticity verification using C2PA"
+        - id: "CIP-BLOCKCHAIN-1"
+          name: "Smart contract security auditing"
+        - id: "CIP-PRIVACY-1"
+          name: "GDPR and CCPA compliance for creator data"

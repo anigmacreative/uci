@@ -1,0 +1,415 @@
+# Staging environment namespace and configuration
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: creative-identity-staging
+  labels:
+    name: creative-identity-staging
+    environment: staging
+    app.kubernetes.io/name: creative-identity-platform
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: namespace
+    app.kubernetes.io/part-of: creative-identity-platform
+    app.kubernetes.io/managed-by: kubernetes
+    istio-injection: enabled
+  annotations:
+    environment.creative-identity/type: "staging"
+    environment.creative-identity/region: "us-west-2"
+    environment.creative-identity/cost-center: "product"
+    scheduler.alpha.kubernetes.io/node-selector: "environment=staging"
+
+---
+# Staging environment resource quota (production-like but smaller)
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: staging-quota
+  namespace: creative-identity-staging
+spec:
+  hard:
+    # Compute resources (50% of production)
+    requests.cpu: "25"
+    requests.memory: "50Gi"
+    limits.cpu: "50"
+    limits.memory: "100Gi"
+    
+    # Storage
+    requests.storage: "500Gi"
+    persistentvolumeclaims: "30"
+    
+    # Network
+    services: "30"
+    services.loadbalancers: "3"
+    services.nodeports: "5"
+    
+    # Objects
+    pods: "100"
+    configmaps: "50"
+    secrets: "40"
+    deployments.apps: "30"
+    statefulsets.apps: "15"
+
+---
+# Network policies for staging environment (more restrictive than dev)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: staging-network-policy
+  namespace: creative-identity-staging
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow ingress from same namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: creative-identity-staging
+  
+  # Allow ingress from monitoring namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 9090
+  
+  # Allow ingress from load balancer
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3000
+    - protocol: TCP
+      port: 3001
+  
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  
+  # Allow connection to external APIs (restricted list)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443 # HTTPS
+    - protocol: TCP
+      port: 80 # HTTP
+  
+  # Allow connection to monitoring
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+    - protocol: TCP
+      port: 3000
+
+---
+# Staging environment configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: staging-config
+  namespace: creative-identity-staging
+  labels:
+    environment: staging
+    config-type: application
+data:
+  NODE_ENV: "staging"
+  LOG_LEVEL: "info"
+  API_BASE_URL: "https://api-staging.creativeidentity.platform"
+  WEBSOCKET_URL: "wss://ws-staging.creativeidentity.platform"
+  
+  # Staging-specific features (production-like but with some testing enabled)
+  ENABLE_DEBUG_LOGS: "false"
+  ENABLE_HOT_RELOAD: "false"
+  ENABLE_MOCK_BIOMETRIC: "false"
+  ENABLE_TEST_BLOCKCHAIN: "false" # Use testnet
+  SKIP_EMAIL_VERIFICATION: "false"
+  ENABLE_RATE_LIMITING: "true"
+  ENABLE_SECURITY_HEADERS: "true"
+  
+  # External services (staging/testnet endpoints)
+  IPFS_NODE_URL: "https://ipfs-staging.creativeidentity.platform"
+  POLYGON_RPC_URL: "https://polygon-mumbai.g.alchemy.com/v2/staging-key"
+  ELASTICSEARCH_URL: "http://elasticsearch.creative-identity-staging.svc.cluster.local:9200"
+  
+  # Database configuration
+  POSTGRES_HOST: "postgres.creative-identity-staging.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DATABASE: "creative_identity_staging"
+  
+  REDIS_HOST: "redis.creative-identity-staging.svc.cluster.local"
+  REDIS_PORT: "6379"
+  
+  # Monitoring configuration
+  PROMETHEUS_URL: "http://prometheus.monitoring.svc.cluster.local:9090"
+  GRAFANA_URL: "http://grafana.monitoring.svc.cluster.local:3000"
+  JAEGER_URL: "http://jaeger-query.monitoring.svc.cluster.local:16686"
+  
+  # Staging-specific feature flags
+  FEATURE_FLAGS: |
+    {
+      "enableBetaFeatures": true,
+      "enableDebugMode": false,
+      "enableMockServices": false,
+      "enablePerformanceProfiling": true,
+      "enableExperimentalUI": false,
+      "skipRateLimiting": false,
+      "enableDetailedLogging": false,
+      "enableA11yTesting": true,
+      "enableLoadTesting": true,
+      "enableSecurityTesting": true
+    }
+  
+  # Performance and scaling configuration
+  MAX_CONCURRENT_REQUESTS: "1000"
+  REQUEST_TIMEOUT_MS: "30000"
+  WEBSOCKET_MAX_CONNECTIONS: "10000"
+  CACHE_TTL_SECONDS: "3600"
+  
+  # Content verification settings
+  C2PA_VERIFICATION_LEVEL: "strict"
+  BIOMETRIC_CONFIDENCE_THRESHOLD: "0.95"
+  CONTENT_MODERATION_LEVEL: "strict"
+  
+  # Business metrics thresholds for staging validation
+  MAX_IDENTITY_CREATIONS_PER_MINUTE: "100"
+  MAX_CONTENT_VERIFICATIONS_PER_MINUTE: "500"
+  MAX_PLATFORM_SYNCS_PER_MINUTE: "200"
+
+---
+# Staging secrets (more secure than dev, but not production)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: staging-secrets
+  namespace: creative-identity-staging
+  labels:
+    environment: staging
+    secret-type: application
+type: Opaque
+data:
+  # Base64 encoded staging secrets (managed by external secret management)
+  JWT_SECRET: c3RhZ2luZ19qd3Rfc2VjcmV0X3NlY3VyZV8xMjNhYmNkZWZnaGlqaw== # staging_jwt_secret_secure_123abcdefghijk
+  STRIPE_SECRET_KEY: c2tfdGVzdF9zdGFnaW5nX2tleV9zZWN1cmVfNDU2Nzg5 # sk_test_staging_key_secure_456789
+  BIOMETRIC_ENCRYPTION_KEY: c3RhZ2luZ19iaW9tZXRyaWNfa2V5X2VuY3J5cHRlZF9zZWN1cmVfNzg5YWJjZGVmZ2hpamtsbW5vcA== # staging_biometric_key_encrypted_secure_789abcdefghijklmnop
+  STORY_PROTOCOL_API_KEY: c3Rvcnlwcm90b2NvbF9zdGFnaW5nX2FwaV9rZXlfc2VjdXJlXzk4NzY1NDMyMQ== # storyprotocol_staging_api_key_secure_987654321
+  
+  # Database credentials (managed by K8s secrets)
+  POSTGRES_USERNAME: Y3JlYXRpdmVfaWRlbnRpdHlfc3RhZ2luZw== # creative_identity_staging
+  POSTGRES_PASSWORD: c3RhZ2luZ19kYXRhYmFzZV9wYXNzd29yZF9zZWN1cmVfMTIzNDU2Nzg5MA== # staging_database_password_secure_1234567890
+  
+  # Redis credentials
+  REDIS_PASSWORD: c3RhZ2luZ19yZWRpc19wYXNzd29yZF9zZWN1cmVfOTg3NjU0MzIx # staging_redis_password_secure_987654321
+  
+  # Blockchain testnet private key
+  POLYGON_PRIVATE_KEY: MHhhYmNkZWY5ODc2NTQzMjEwZmVkY2JhMTIzNDU2Nzg5MGFiY2RlZmY4Nzc2NTQzMjEwOTg3NjU0MzIxYWJjZGVm # 0xabcdef9876543210fedcba1234567890abcdeff877654321098765432
+  
+  # External API keys for staging
+  TIKTOK_API_KEY: dGlrdG9rX3N0YWdpbmdfYXBpX2tleV9zZWN1cmU= # tiktok_staging_api_key_secure
+  INSTAGRAM_API_KEY: aW5zdGFncmFtX3N0YWdpbmdfYXBpX2tleV9zZWN1cmU= # instagram_staging_api_key_secure
+  YOUTUBE_API_KEY: eW91dHViZV9zdGFnaW5nX2FwaV9rZXlfc2VjdXJl # youtube_staging_api_key_secure
+  
+  # Monitoring and alerting
+  SLACK_WEBHOOK_URL: aHR0cHM6Ly9ob29rcy5zbGFjay5jb20vc2VydmljZXMvVDEyMzQ1L0I2Nzg5MC9zdGFnaW5nX3dlYmhvb2tfc2VjcmV0 # staging webhook URL
+  PAGERDUTY_API_KEY: cGFnZXJkdXR5X3N0YWdpbmdfYXBpX2tleV9zZWN1cmU= # pagerduty_staging_api_key_secure
+
+---
+# Staging ingress with more production-like configuration
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: creative-identity-staging-ingress
+  namespace: creative-identity-staging
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://staging.creativeidentity.platform"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, PUT, POST, DELETE, PATCH, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Content-Type, Authorization, X-Requested-With"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Rate limiting for staging
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss:;" always;
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - staging.creativeidentity.platform
+    - api-staging.creativeidentity.platform
+    - ws-staging.creativeidentity.platform
+    secretName: creative-identity-staging-tls
+  rules:
+  - host: staging.creativeidentity.platform
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: creative-identity-app
+            port:
+              number: 3000
+  - host: api-staging.creativeidentity.platform
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: creative-identity-api
+            port:
+              number: 3000
+  - host: ws-staging.creativeidentity.platform
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: creative-identity-websocket
+            port:
+              number: 3001
+
+---
+# Staging horizontal pod autoscaler (production-like scaling)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: creative-identity-app-hpa
+  namespace: creative-identity-staging
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: creative-identity-app
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "1000"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+
+---
+# Staging pod disruption budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: creative-identity-app-pdb
+  namespace: creative-identity-staging
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: creative-identity-app
+
+---
+# Staging monitoring and alerting
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: creative-identity-staging
+  namespace: creative-identity-staging
+  labels:
+    environment: staging
+    monitoring: enabled
+spec:
+  selector:
+    matchLabels:
+      app: creative-identity
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
+  - port: http
+    path: /api/metrics
+    interval: 15s
+    scrapeTimeout: 10s
+
+---
+# Staging-specific PrometheusRule for alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: creative-identity-staging-alerts
+  namespace: creative-identity-staging
+spec:
+  groups:
+  - name: staging-specific-alerts
+    rules:
+    - alert: StagingHighErrorRate
+      expr: rate(http_requests_total{namespace="creative-identity-staging",status=~"5.."}[5m]) > 0.02
+      for: 2m
+      labels:
+        severity: warning
+        environment: staging
+      annotations:
+        summary: "High error rate in staging environment"
+        description: "Staging error rate is above 2% for 2 minutes"
+    
+    - alert: StagingPerformanceDegradation
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{namespace="creative-identity-staging"}[5m])) > 3.0
+      for: 3m
+      labels:
+        severity: warning
+        environment: staging
+      annotations:
+        summary: "Performance degradation in staging"
+        description: "95th percentile response time above 3 seconds"
